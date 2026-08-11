@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Play Dungeon Blitz</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #484955;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #game-container {
+      width: min(100vw, 150vh);
+      height: min(100vh, 66.6667vw);
+      aspect-ratio: 3 / 2;
+      flex: 0 0 auto;
+      background: #484955;
+    }
+
+    #DungeonBlitz,
+    object#DungeonBlitz,
+    embed#DungeonBlitz {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      margin: 0;
+      border: 0;
+    }
+
+    #ruffle-status {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #e9e6de;
+      font-family: sans-serif;
+      text-align: center;
+      pointer-events: none;
+      background: #484955;
+    }
+
+    ruffle-player {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #ruffle-status[hidden] { display: none; }
+  </style>
+</head>
+
+<body>
+
+  <div id="game-container"></div>
+
+  <div id="ruffle-status" role="status" aria-live="polite">
+    <div>
+      <p>Dungeon Blitz hazırlanıyor…</p>
+    </div>
+  </div>
+
+  <script>
+    const hostParams = new URLSearchParams(window.location.search);
+    const requestedRenderer = hostParams.get("renderer");
+    const preferredRenderer = ["webgpu", "wgpu-webgl", "webgl", "canvas"].includes(requestedRenderer)
+      ? requestedRenderer
+      : "webgpu";
+    const requestedQuality = hostParams.get("quality");
+    const gameQuality = ["low", "medium", "high", "best"].includes(requestedQuality)
+      ? requestedQuality
+      : "medium";
+    const requestedRuffleVersion = hostParams.get("v");
+    const ruffleRuntimeVersion = requestedRuffleVersion === "4" ? "4" : "3";
+    const ruffleRuntimeUrl = `/ruffle-dbr-v${ruffleRuntimeVersion}/ruffle.js`;
+
+    window.RufflePlayer = window.RufflePlayer || {};
+    window.__dbrSuperAnimStats = Object.create(null);
+    window.JSRecordStat = function (name, value) {
+      if (name !== "frame" && name !== "dblogin" && name !== "Player") {
+        return;
+      }
+      const entry = window.__dbrSuperAnimStats[name] || {
+        count: 0,
+        values: []
+      };
+      entry.count += 1;
+      entry.last = value;
+      if (name === "Player" && value === true) {
+        entry.trueCount = (entry.trueCount || 0) + 1;
+      }
+      if (entry.values.length < 180) {
+        entry.values.push(value);
+      }
+      window.__dbrSuperAnimStats[name] = entry;
+    };
+    window.RufflePlayer.config = {
+      allowScriptAccess: true,
+      autoplay: "on",
+      unmuteOverlay: "visible",
+      splashScreen: false,
+      backgroundColor: "#484955",
+      letterbox: "on",
+      scale: "showAll",
+      quality: gameQuality,
+      preferredRenderer,
+      logLevel: "warn",
+      socketProxy: [
+        {
+          host: "dungenblitz.ecliptia.net",
+          port: 443,
+          proxyUrl: "wss://dungenblitz.ecliptia.net/game-socket"
+        },
+        {
+          host: "dungenblitz.ecliptia.net",
+          port: 7498,
+          proxyUrl: "wss://dungenblitz.ecliptia.net/game-socket"
+        },
+        {
+          host: "dungenblitz.ecliptia.net",
+          port: 8080,
+          proxyUrl: "wss://dungenblitz.ecliptia.net/game-socket"
+        }
+      ]
+    };
+    window.__dbrLoadRuffleRuntime = function () {
+      return new Promise(function (resolve, reject) {
+        const runtime = document.createElement("script");
+        runtime.src = ruffleRuntimeUrl;
+        runtime.async = true;
+        runtime.onload = resolve;
+        runtime.onerror = function () {
+          reject(new Error(`Could not load Ruffle runtime: ${ruffleRuntimeUrl}`));
+        };
+        document.head.appendChild(runtime);
+      });
+    };
+  </script>
+
+  <script>
+    function normalizeGameLanguage(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return normalized === "en" || normalized === "tr" ? normalized : "";
+    }
+
+    const urlLanguage = normalizeGameLanguage(new URLSearchParams(window.location.search).get("lang"));
+    document.cookie = "db_lang=; path=/; max-age=0; SameSite=Lax";
+
+    const languageParam = urlLanguage ? `&lang=${urlLanguage}` : "";
+    const requestedDebugPlayerBuild = new URLSearchParams(window.location.search).get("debugPlayerBuild") || "";
+    const debugPlayerBuild = /^[a-z0-9-]+$/.test(requestedDebugPlayerBuild)
+      ? requestedDebugPlayerBuild
+      : "";
+    const debugPlayerBuildParam = debugPlayerBuild
+      ? `&debugPlayerBuild=${encodeURIComponent(debugPlayerBuild)}`
+      : "";
+    const swfUrl = `/p/cbp/DungeonBlitz.swf?fv=cbp&gv=cbp&clientrev=swf-0fa8ec876a8c${languageParam}${debugPlayerBuildParam}`;
+    console.log("[DungeonBlitzHost] Loading SWF", swfUrl);
+    const localBridgeBaseUrl = "http://127.0.0.1:47631";
+    const selfPresenceUrl = "/api/presence/self";
+    const discordJoinUrl = "/api/presence/discord-join";
+    const discordPendingUrl = "/api/auth/discord/pending";
+    const presencePollMs = 4000;
+    const localDiscordBridgeEnabled =
+      window.location.protocol === "http:" || window.location.protocol === "https:";
+    let lastPresenceHash = "";
+    let discordPendingPollTimer = 0;
+    let discordPendingPollUntil = 0;
+    let discordReloadNonce = 0;
+
+    function showFallback() {
+      const status = document.getElementById("ruffle-status");
+      status.hidden = false;
+      status.innerHTML = "<p>Oyun başlatılamadı. Sayfayı yenileyip tekrar dene.</p>";
+    }
+
+    function hideHint() {
+      const status = document.getElementById("ruffle-status");
+      if (status) status.hidden = true;
+    }
+
+    async function postToLocalBridge(path, body) {
+      try {
+        await fetch(`${localBridgeBaseUrl}${path}`, {
+          method: "POST",
+          mode: "cors",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          keepalive: true
+        });
+      } catch (_error) {
+        // Local bridge is optional; ignore when it is not running.
+      }
+    }
+
+    async function syncDiscordPresence() {
+      if (!localDiscordBridgeEnabled) {
+        return;
+      }
+
+      try {
+        const response = await fetch(selfPresenceUrl, {
+          cache: "no-store",
+          credentials: "same-origin"
+        });
+
+        if (!response.ok) {
+          if (lastPresenceHash) {
+            lastPresenceHash = "";
+            await postToLocalBridge("/clear", { clear: true });
+          }
+          return;
+        }
+
+        const payload = await response.json();
+        const session = payload && payload.session ? payload.session : null;
+        if (!session) {
+          if (lastPresenceHash) {
+            lastPresenceHash = "";
+            await postToLocalBridge("/clear", { clear: true });
+          }
+          return;
+        }
+
+        const bridgePayload = {
+          characterName: session.characterName,
+          details: session.details,
+          state: session.state,
+          startedAtMs: session.startedAtMs,
+          partySize: session.partySize,
+          partyId: session.partyId,
+          partyMax: session.partyMax,
+          partyLocked: session.partyLocked,
+          joinSecret: session.joinSecret,
+          levelKey: session.levelKey,
+          activityKind: session.activityKind,
+          presenceUrl: new URL(selfPresenceUrl, window.location.origin).toString(),
+          joinUrl: new URL(discordJoinUrl, window.location.origin).toString()
+        };
+        const nextHash = JSON.stringify(bridgePayload);
+        if (nextHash === lastPresenceHash) {
+          return;
+        }
+
+        lastPresenceHash = nextHash;
+        await postToLocalBridge("/presence", bridgePayload);
+      } catch (_error) {
+        // Keep polling; game must continue even if presence sync fails.
+      }
+    }
+
+    function showDiscordStatus(message) {
+      const status = document.getElementById("discord-login-status");
+      if (!status) {
+        console.log("[DungeonBlitzHost]", message);
+        return;
+      }
+      status.textContent = message;
+      status.style.display = "block";
+    }
+
+    function resumeDiscordOAuthInSwf(pendingEmail) {
+      const swf = document.getElementById("DungeonBlitz");
+      if (!swf || typeof swf.SWFDiscordOAuthLogin !== "function") {
+        return false;
+      }
+
+      try {
+        const result = swf.SWFDiscordOAuthLogin(pendingEmail);
+        return result === true || result === "true";
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    async function pollDiscordPendingLogin() {
+      if (!discordPendingPollUntil || Date.now() > discordPendingPollUntil) {
+        stopDiscordPendingLoginPoll();
+        return;
+      }
+
+      try {
+        const response = await fetch(discordPendingUrl, {
+          cache: "no-store",
+          credentials: "same-origin"
+        });
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = await response.json();
+        if (!payload || !payload.pending) {
+          return;
+        }
+
+        stopDiscordPendingLoginPoll();
+        const pendingEmail = String(payload.email || "").trim();
+        showDiscordStatus(
+          pendingEmail
+            ? `Discord login tamamlandi (${pendingEmail}). Oyun hesaba baglaniyor...`
+            : "Discord login tamamlandi. Oyun hesaba baglaniyor..."
+        );
+        if (resumeDiscordOAuthInSwf(pendingEmail)) {
+          return;
+        }
+
+        showDiscordStatus("Discord login tamamlandi. Oyun yenileniyor...");
+        embedDungeonBlitzSwf(true);
+      } catch (_error) {
+        // Keep polling until the short OAuth handoff window expires.
+      }
+    }
+
+    function stopDiscordPendingLoginPoll() {
+      if (discordPendingPollTimer) {
+        clearInterval(discordPendingPollTimer);
+        discordPendingPollTimer = 0;
+      }
+      discordPendingPollUntil = 0;
+    }
+
+    function startDiscordPendingLoginPoll() {
+      discordPendingPollUntil = Date.now() + 2 * 60 * 1000;
+      if (!discordPendingPollTimer) {
+        discordPendingPollTimer = setInterval(pollDiscordPendingLogin, 1000);
+      }
+      setTimeout(pollDiscordPendingLogin, 1000);
+    }
+
+    async function embedDungeonBlitzSwf(forceReload) {
+      const container = document.getElementById("game-container");
+      const objectSwfUrl = forceReload
+        ? `${swfUrl}&oauth=${Date.now()}-${++discordReloadNonce}`
+        : swfUrl;
+
+      try {
+        const ruffle = window.RufflePlayer.newest();
+        const player = ruffle.createPlayer();
+        player.id = "DungeonBlitz";
+        player.name = "DungeonBlitz";
+        container.replaceChildren(player);
+        await player.ruffle().load(objectSwfUrl);
+        hideHint();
+      } catch (error) {
+        console.error("[DungeonBlitzHost] Ruffle failed to start", error);
+        showFallback();
+      }
+    }
+
+    async function bootDungeonBlitzRuffle() {
+      try {
+        await window.__dbrLoadRuffleRuntime();
+        await embedDungeonBlitzSwf();
+      } catch (error) {
+        console.error("[DungeonBlitzHost] Ruffle runtime failed to load", error);
+        showFallback();
+      }
+    }
+
+    void bootDungeonBlitzRuffle();
+    discordPendingPollUntil = Date.now() + 5000;
+    setTimeout(pollDiscordPendingLogin, 500);
+    window.addEventListener("storage", function (event) {
+      if (event.key !== "db_discord_oauth_complete") {
+        return;
+      }
+
+      startDiscordPendingLoginPoll();
+      setTimeout(pollDiscordPendingLogin, 250);
+    });
+    if (localDiscordBridgeEnabled) {
+      setTimeout(syncDiscordPresence, 2500);
+      setInterval(syncDiscordPresence, presencePollMs);
+    }
+
+    window.addEventListener("beforeunload", function () {
+      if (!localDiscordBridgeEnabled || !lastPresenceHash) return;
+      void postToLocalBridge("/clear", { clear: true });
+    });
+  </script>
+</body>
+</html>

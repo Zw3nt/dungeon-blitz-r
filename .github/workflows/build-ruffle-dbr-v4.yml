@@ -1,0 +1,64 @@
+name: Build Dungeon Blitz Ruffle v4
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'patches/ruffle-dungeon-blitz-*.patch'
+      - 'scripts/build-ruffle-dbr.sh'
+      - '.github/workflows/build-ruffle-dbr-v4.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-selfhosted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RUFFLE_SOURCE_DIR: ${{ runner.temp }}/ruffle-dbr-source
+      CARGO_BUILD_JOBS: '1'
+      NODE_OPTIONS: --max-old-space-size=1536
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Ruffle's own web CI tests Node 24 for this source generation.
+          node-version: '24'
+
+      - name: Set up Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Install matching wasm-bindgen CLI
+        # Must match wasm-bindgen in Ruffle commit 684cf827.
+        run: cargo install wasm-bindgen-cli --version 0.2.120 --locked
+
+      - name: Install wasm-opt
+        uses: sigoden/install-binary@v1
+        with:
+          repo: WebAssembly/binaryen
+          tag: version_129
+          name: wasm-opt
+
+      - name: Build patched self-hosted Ruffle bundle
+        run: ./scripts/build-ruffle-dbr.sh "${RUNNER_TEMP}/ruffle-dbr-v4"
+
+      - name: Verify bundle
+        run: |
+          test -f "${RUNNER_TEMP}/ruffle-dbr-v4/ruffle.js"
+          find "${RUNNER_TEMP}/ruffle-dbr-v4" -type f -name '*.wasm' -print -quit | grep -q .
+          grep -F '684cf8270166b9230216002f4e617778468c84c3' "${RUNNER_TEMP}/ruffle-dbr-v4/DUNGEON_BLITZ_BUILD.txt"
+
+      - name: Upload Ruffle v4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruffle-dbr-v4
+          path: ${{ runner.temp }}/ruffle-dbr-v4
+          if-no-files-found: error
+          retention-days: 30
