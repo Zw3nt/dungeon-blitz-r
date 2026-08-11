@@ -1,0 +1,235 @@
+diff --git a/core/src/avm2/globals.rs b/core/src/avm2/globals.rs
+index 678383496..6d41c4dcb 100644
+--- a/core/src/avm2/globals.rs
++++ b/core/src/avm2/globals.rs
+@@ -174,6 +174,9 @@ pub struct SystemClasses<'gc> {
+     pub dictionary: ClassObject<'gc>,
+     pub id3info: ClassObject<'gc>,
+     pub textrun: ClassObject<'gc>,
++    pub graphicssolidfill: ClassObject<'gc>,
++    pub graphicspath: ClassObject<'gc>,
++    pub graphicsendfill: ClassObject<'gc>,
+     pub sharedobject: ClassObject<'gc>,
+     pub worker: ClassObject<'gc>,
+     pub workerdomain: ClassObject<'gc>,
+@@ -352,6 +355,9 @@ impl<'gc> SystemClasses<'gc> {
+             dictionary: object,
+             id3info: object,
+             textrun: object,
++            graphicssolidfill: object,
++            graphicspath: object,
++            graphicsendfill: object,
+             sharedobject: object,
+             worker: object,
+             workerdomain: object,
+@@ -759,6 +765,9 @@ pub fn init_native_system_classes(activation: &mut Activation<'_, '_>) {
+             ("flash.text", "TextField", textfield),
+             ("flash.text", "TextLineMetrics", textlinemetrics),
+             ("flash.text", "TextRun", textrun),
++            ("flash.display", "GraphicsSolidFill", graphicssolidfill),
++            ("flash.display", "GraphicsPath", graphicspath),
++            ("flash.display", "GraphicsEndFill", graphicsendfill),
+             ("flash.text.engine", "TextLine", textline),
+             ("flash.filters", "BevelFilter", bevelfilter),
+             ("flash.filters", "BitmapFilter", bitmapfilter),
+diff --git a/core/src/avm2/globals/flash/display/graphics.rs b/core/src/avm2/globals/flash/display/graphics.rs
+index 95cc417d3..97018e3dc 100644
+--- a/core/src/avm2/globals/flash/display/graphics.rs
++++ b/core/src/avm2/globals/flash/display/graphics.rs
+@@ -18,8 +18,8 @@ use crate::avm2::value::Value;
+ use crate::avm2::vector::VectorStorage;
+ use crate::avm2::{ArrayStorage, Error};
+ use crate::avm2_stub_method;
+-use crate::display_object::TDisplayObject;
+-use crate::drawing::Drawing;
++use crate::display_object::{TDisplayObject, TDisplayObjectContainer};
++use crate::drawing::{Drawing, DrawingFill, DrawingPath};
+ use crate::string::{AvmString, WStr};
+ use ruffle_render::shape_utils::{DrawCommand, FillRule, GradientType};
+ use std::f64::consts::FRAC_1_SQRT_2;
+@@ -1342,13 +1342,121 @@ pub fn line_bitmap_style<'gc>(
+ /// Implements `Graphics.readGraphicsData`
+ pub fn read_graphics_data<'gc>(
+     activation: &mut Activation<'_, 'gc>,
+-    _this: Value<'gc>,
+-    _args: &[Value<'gc>],
++    this: Value<'gc>,
++    args: &[Value<'gc>],
+ ) -> Result<Value<'gc>, Error<'gc>> {
+-    avm2_stub_method!(activation, "flash.display.Graphics", "readGraphicsData");
++    let mut result = Vec::new();
++    let recurse = args.get_bool(0);
++
++    if let Some(root) = this.as_object().and_then(|object| object.as_display_object()) {
++        let mut pending = vec![(root, Matrix::IDENTITY)];
++
++        while let Some((display_object, matrix)) = pending.pop() {
++            if recurse && let Some(container) = display_object.as_container() {
++                for child in container.iter_render_list().rev() {
++                    let child_matrix: Matrix = child.base().matrix().into();
++                    pending.push((child, matrix * child_matrix));
++                }
++            }
++
++            let Some(drawing) = display_object.as_drawing() else {
++                continue;
++            };
++            for path in drawing.paths() {
++            if let DrawingPath::Fill(DrawingFill {
++                style, commands, ..
++            }) = path
++            {
++                let FillStyle::Color(color) = style else {
++                    continue;
++                };
++                result.push(
++                    activation.avm2().classes().graphicssolidfill.construct(
++                        activation,
++                        &[
++                            Value::Integer(color.to_rgb() as i32),
++                            Value::Number(f64::from(color.a) / 255.0),
++                        ],
++                    )?,
++                );
++
++                let mut path_commands = Vec::new();
++                let mut path_data = Vec::new();
++                let mut add_point = |point: &Point<Twips>| {
++                    let point = matrix * *point;
++                    path_data.push(point.x.to_pixels());
++                    path_data.push(point.y.to_pixels());
++                };
++
++                for command in commands {
++                    match command {
++                        DrawCommand::MoveTo(point) => {
++                            path_commands.push(1);
++                            add_point(point);
++                        }
++                        DrawCommand::LineTo(point) => {
++                            path_commands.push(2);
++                            add_point(point);
++                        }
++                        DrawCommand::QuadraticCurveTo { control, anchor } => {
++                            path_commands.push(3);
++                            add_point(control);
++                            add_point(anchor);
++                        }
++                        DrawCommand::CubicCurveTo {
++                            control_a,
++                            control_b,
++                            anchor,
++                        } => {
++                            path_commands.push(6);
++                            add_point(control_a);
++                            add_point(control_b);
++                            add_point(anchor);
++                        }
++                    }
++                }
++
++                let commands = VectorObject::from_vector(
++                    VectorStorage::from_values(
++                        path_commands
++                            .into_iter()
++                            .map(Value::Integer)
++                            .collect(),
++                        true,
++                        Some(activation.avm2().class_defs().int),
++                    ),
++                    activation,
++                );
++                let data = VectorObject::from_vector(
++                    VectorStorage::from_values(
++                        path_data.into_iter().map(Value::Number).collect(),
++                        true,
++                        Some(activation.avm2().class_defs().number),
++                    ),
++                    activation,
++                );
++
++                result.push(
++                    activation.avm2().classes().graphicspath.construct(
++                        activation,
++                        &[commands.into(), data.into()],
++                    )?,
++                );
++                result.push(
++                    activation
++                        .avm2()
++                        .classes()
++                        .graphicsendfill
++                        .construct(activation, &[])?,
++                );
++            }
++        }
++        }
++    }
++
+     let value_type = activation.avm2().class_defs().igraphicsdata;
+-    let new_storage = VectorStorage::new(0, false, Some(value_type));
+-    Ok(VectorObject::from_vector(new_storage, activation).into())
++    let storage = VectorStorage::from_values(result, false, Some(value_type));
++    Ok(VectorObject::from_vector(storage, activation).into())
+ }
+ 
+ fn read_point<'gc>(
+diff --git a/core/src/display_object/graphic.rs b/core/src/display_object/graphic.rs
+index 2a73ff9c2..61d6c5128 100644
+--- a/core/src/display_object/graphic.rs
++++ b/core/src/display_object/graphic.rs
+@@ -114,7 +114,14 @@ impl<'gc> Graphic<'gc> {
+     }
+ 
+     pub fn drawing_mut(&self) -> RefMut<'_, Drawing> {
+-        self.0.drawing.get_or_init(Default::default).borrow_mut()
++        self.0
++            .drawing
++            .get_or_init(|| {
++                Box::new(RefCell::new(Drawing::from_swf_shape(
++                    &self.0.shared.get().shape,
++                )))
++            })
++            .borrow_mut()
+     }
+ 
+     pub fn set_avm2_class(self, mc: &Mutation<'gc>, class: Avm2ClassObject<'gc>) {
+diff --git a/core/src/drawing.rs b/core/src/drawing.rs
+index 6a87ca93d..159ec0a25 100644
+--- a/core/src/drawing.rs
++++ b/core/src/drawing.rs
+@@ -415,6 +415,10 @@ impl Drawing {
+             self.mark_dirty();
+         }
+     }
++
++    pub(crate) fn paths(&self) -> &[DrawingPath] {
++        &self.paths
++    }
+ }
+ 
+ impl BitmapSource for Drawing {
+@@ -430,10 +434,10 @@ impl BitmapSource for Drawing {
+ }
+ 
+ #[derive(Debug, Clone)]
+-struct DrawingFill {
+-    style: FillStyle,
+-    rule: FillRule,
+-    commands: Vec<DrawCommand>,
++pub(crate) struct DrawingFill {
++    pub style: FillStyle,
++    pub rule: FillRule,
++    pub commands: Vec<DrawCommand>,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -444,7 +448,7 @@ struct DrawingLine {
+ }
+ 
+ #[derive(Debug, Clone)]
+-enum DrawingPath {
++pub(crate) enum DrawingPath {
+     Fill(DrawingFill),
+     Line(DrawingLine),
+ }
