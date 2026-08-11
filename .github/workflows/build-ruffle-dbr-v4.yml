@@ -16,7 +16,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      RUFFLE_SOURCE_DIR: ${{ runner.temp }}/ruffle-dbr-source
       CARGO_BUILD_JOBS: '1'
       NODE_OPTIONS: --max-old-space-size=1536
 
@@ -47,7 +46,9 @@ jobs:
           name: wasm-opt
 
       - name: Build patched self-hosted Ruffle bundle
-        run: ./scripts/build-ruffle-dbr.sh "${RUNNER_TEMP}/ruffle-dbr-v4"
+        run: |
+          RUFFLE_SOURCE_DIR="${RUNNER_TEMP}/ruffle-dbr-source" \
+            ./scripts/build-ruffle-dbr.sh "${RUNNER_TEMP}/ruffle-dbr-v4"
 
       - name: Verify bundle
         run: |
