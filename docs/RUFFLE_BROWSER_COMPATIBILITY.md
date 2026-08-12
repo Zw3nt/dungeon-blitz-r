@@ -390,17 +390,52 @@ tooling) turned out to be trivial data classes -- `a_RoomDirector` has only
 `thinkOnEnter: String`, `thinkOnCompletion: String`, `thinkOnHit: Array`
 instance fields and no methods; `a_LevelDirector` has only a `type: String`
 field. They are declarative cue definitions, not the logic that processes
-them. The multiname `thinkOnEnter` is referenced elsewhere in
-`DungeonBlitz.swf`'s ABC (confirmed via a multiname scan) but a first
-opcode-level reference scan for `getproperty`/`setproperty` against that
-multiname found no hits, meaning whatever reads `a_RoomDirector.thinkOnEnter`
-either accesses it through a different opcode pattern than scanned so far
-or resolves the property name dynamically (bracket notation from a string
-on the stack, not a compile-time-known multiname). Finding the actual
-consumer class is the next concrete step -- try scanning for `a_RoomDirector`
-itself (as a type/class reference, e.g. `istype`/`coerce`/`getDefinition`)
-rather than its field names, or search for `a_PlayerSpawn` the same way
-since that class is a much more direct anchor to the spawn call site.
+them.
+
+**Update (2026-08-12), spawn resolution traced and ruled out as the race:**
+`ffdec-cli -export script -format script:as` gives readable (if
+control-flow-mangled by the pinned build's obfuscator) decompiled
+ActionScript, which is far more productive here than reading raw p-code.
+The recursive per-room child dispatcher is `Level.method_232`. It matches
+children by both `is <Class>` (`a_RoomDirector`, `a_Hotspot`, ...) and by
+instance-name string prefix (`"a_Door_"`, `"a_DoorMarker"`, `"a_PlayerSpawn"`
+compared with `_loc15_ == "a_PlayerSpawn"`). The player-spawn branch is:
+
+```as3
+if (_loc15_ == "a_PlayerSpawn") {
+    this.var_239 = new Point();
+    this.var_2549 = this.method_269(_loc14_, this.var_239);
+    break loop93;
+}
+```
+
+`method_269(child, point)` (`Level.as:4497`) does nothing but read
+`child.transform.concatenatedMatrix.tx/ty` into the point and hide the
+marker (`visible = false`) -- a pure, synchronous coordinate readout with
+no physics or collision interaction at all. `Level.method_1195` asserts
+`class_24.method_19("Level needs a PlayerSpawn")` if `var_239` is still
+null after the room-children pass, confirming spawn-point resolution
+happens inside the same single synchronous pass as `a_RoomDirector` and
+collision-object handling, in document (timeline child) order, for one
+already-loaded room's SWF. There is no `Loader`/`addEventListener` visible
+in this method, so **this pass itself is not where the race is** -- for a
+single already-loaded level, spawn position and collision registration
+both complete before the method returns, matching what was already known
+to work for TutorialBoat's *own* room.
+
+The remaining, still-unfound piece is what happens **across the SWF
+boundary** on a room transition: whatever per-frame ticker starts running
+gravity/physics for the just-spawned player (likely in `Game`'s or an
+`Entity`/`ClientEntity`'s update loop, not in `Level.as`) may not be gated
+on "this room's collision objects have finished `class_154.method_444`
+registration" specifically when that room's *level SWF itself* just
+finished an asynchronous `Loader` load -- as opposed to processing a child
+within an already-resident SWF, which is what `method_232` handles. Next
+step: find that per-frame physics ticker (search `DungeonBlitz.swf` for the
+class calling `class_154.method_444` and see what schedules calls to it
+relative to `ENTER_FRAME`/whatever drives player gravity) and check whether
+it can run for a frame or two against a room whose collision hasn't been
+registered yet right after a cross-SWF transition.
 
 ### Required v4 acceptance test
 
