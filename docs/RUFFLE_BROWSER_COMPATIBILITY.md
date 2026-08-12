@@ -178,6 +178,74 @@ the missing world region on a real GPU-backed client.
 Manual external browser validation is still requested before promoting v5 to a
 default runtime.
 
+## White tutorial/quest-arrow rectangle investigation
+
+Real browser testing (2026-08-12) found large white rectangles in place of
+several UI indicator graphics: the down/left/right tutorial direction
+arrows and the notify icon that floats above quest NPCs. Static analysis of
+the decompiled client SWFs (`ffdec-cli`, JPEXS FFDec 26.2.1) found the
+mechanism these graphics share:
+
+1. `class_4` (in `DungeonBlitz.swf`'s main ABC) has a static factory method
+   `method_16(className: String): MovieClip`. It resolves the class via
+   `ApplicationDomain.currentDomain.hasDefinition`/`getDefinition` (checking
+   every loaded library SWF in the shared domain, not just the calling
+   SWF) and `construct()`s it. This is the generic "instantiate a linked
+   library symbol by name" path used across the client, independent of our
+   custom Ruffle `readGraphicsData` collision patch.
+2. `Entity.method_397` (methodIdx 713 in `DungeonBlitz.swf`) calls
+   `class_4.method_16("a_Notify_ActiveQuest" | "a_Notify_NewQuest" |
+   "a_Notify_ReturnQuest")` to create the floating notify icon above a quest
+   NPC's head. These three symbols are defined (via the SWF `SymbolClass`
+   tag) in `UI_1.swf` as character ids 2706/2704/2702 respectively — a
+   bouncing-pin sprite (79-frame Y-tween) wrapping a nested shape,
+   **character id 597**, that is placed with `PlaceObject3` carrying a
+   `surfaceFilterList` with a single **`GLOWFILTER`**:
+   `blurX=5.0 blurY=5.0 strength=1.5 compositeSource=true` and glow color
+   `rgba(255,254,236,255)` — i.e. an almost-pure-white glow.
+3. `class_97.method_927` (methodIdx 1779) is the direction-arrow driver: it
+   calls `this.method_187("am_ArrowGoLeft"/"am_ArrowGoRight")` /
+   `this.method_290(...)` depending on `mbVisible`. Unlike the notify icon,
+   no loaded local SWF exports a `SymbolClass` for `am_ArrowGoLeft`/
+   `am_ArrowGoRight`/`am_ArrowUp`/`am_ArrowDown`, so `method_187`/`method_290`
+   most likely address an already-placed named timeline child (matching the
+   `am_TutorialInteraction`/`am_ArrowUp`/`am_ArrowDown` instance properties
+   found on several `ScreenXxx.OnCreateScreen` classes) rather than
+   constructing a new object by class name. This half of the investigation
+   is not yet finished — it needs the same character-id trace applied to
+   whatever symbol backs those instance properties.
+
+Working hypothesis: Ruffle's `GLOWFILTER` render pass
+(`render/wgpu/src/filters/glow.rs` + `render/wgpu/shaders/filter/glow.wgsl`
+at the pinned fork commit) is implemented as a standard wgpu render
+pipeline, so it is not obviously unimplemented on the `wgpu-webgl` backend;
+the fetched source does not show a webgl-specific gap. The near-white glow
+color is suspicious only because it matches the reported symptom almost
+exactly (a light/white rectangle appearing where a bouncing arrow/pin
+should be) — this is not yet confirmed against an actual render. No SWF
+patch or Ruffle patch has been applied for this yet.
+
+Not yet done, in priority order for whoever continues this:
+
+1. Get a live (headless Playwright is sufficient, no GPU/user session
+   required) screenshot of a quest NPC with `a_Notify_NewQuest` visible —
+   e.g. via TutorialBoat's first quest-giving NPC — with browser console
+   captured, to confirm the rectangle position/size matches character 597's
+   glow bounds and to check for any wgpu/WebGL validation errors in
+   console.
+2. If confirmed, bisect whether the bug is `compositeSource=true` specific
+   (Ruffle's shader comments call it "undocumented flash feature") by
+   testing a filtered element that does not use `compositeSource` for
+   comparison.
+3. Finish tracing `class_97.method_927`'s `method_187`/`method_290` targets
+   to confirm or rule out the same glow-filter mechanism for the
+   left/right/up/down tutorial arrows.
+4. Only if Ruffle's filter rendering is confirmed broken for this case,
+   patch it upstream in the pinned fork (same GitHub Actions build/deploy
+   flow as the collision patches) — do not strip the filter from the SWF
+   client-side as a workaround; that changes shipped visual design instead
+   of fixing the renderer.
+
 ### Build and deploy v5
 
 The GitHub Actions workflow `.github/workflows/build-ruffle-dbr-v5.yml`
