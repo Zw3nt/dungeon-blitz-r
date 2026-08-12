@@ -589,3 +589,46 @@ game SWF (most likely, since the fix belongs in `Main`/`Game`/`Entity`/
 scheduling gap, in Ruffle itself. Whichever it is, revert/don't ship this
 trace patch as part of that fix -- it's a temporary instrument, not part of
 the product.
+
+## Gender preview bug (2026-08-12, lead only, not traced)
+
+Confirmed server-side: no `previewGender`/`selectedGender` concept exists
+anywhere in `src/server` -- this is 100% client-side, matching the
+instruction not to touch the save/world gender format. `ScreenCharacterCreation`
+(exported the same `ffdec-cli -export script -format script:as` way) has a
+cleanly-named (not obfuscated) `RefreshPaperDoll()`/`UpdatePaperDoll()` pair.
+`UpdatePaperDoll()` just sets a dirty flag (`this.var_37 = true`);
+`RefreshPaperDoll()` gates most of its body on `!this.var_17` (skips a full
+rebuild, just ticks existing children, unless dirty) but is heavily
+control-flow-obfuscated past that point -- not traced further this session.
+No `am_PrevGender`/`am_NextGender`/`am_GenderName` field is named "gender"
+anywhere in the ABC (ruled out a direct multiname search), so whatever
+tracks the currently-selected gender is an obfuscated `var_NNN` boolean/int,
+same as everywhere else in this client. Next step: same static tracing
+technique as the other investigations (find `am_PrevGender`/`am_NextGender`
+click handlers -- likely `method_1484`/`method_1386` etc. given they're
+listed right after `Display()` -- and follow which instance field they
+toggle, then find where `RefreshPaperDoll()` reads that field to pick a
+body/SuperAnim asset), or add the relevant method names to the v6
+lifecycle-trace patch above once identified and capture it live instead.
+
+## Boss HP bar bug (2026-08-12, two more false leads ruled out)
+
+Continued from the "partial trace" entry above. `class_133` looked
+promising (it references `am_HPBar` *and* sets `scaleX` in the same
+methods, `method_1738`/`method_1475`), but turned out to be the **party
+frame** widget (member portraits/names/locations), not a health bar at
+all -- `method_1738(param1:Number)` positions the group frame by X
+coordinate, and `method_1475(param1:Entity)` renders the member's
+headshot portrait. Two more false positives eliminated. A broader scan
+for every method that does `setproperty scaleX` anywhere in the client
+(30+ hits) wasn't narrowed further this session, since there's no `hp`/
+`maxHp`-named field to co-filter on (HP state is stored in obfuscated
+`var_NNN` fields client-side too, same as gender above). Given `am_HPBar`
+(the presumably-working regular mob/player bar) and `am_BossBar` are
+different symbols/code paths, the fastest remaining approach is probably:
+find `am_HPBar`'s equivalent of `class_61.method_1128`/`method_1409` (its
+owning class wasn't identified this session -- only its *references* were,
+in `class_58`, `class_133`, `class_13`), diff that against `class_61`'s
+version to find what's actually different, since regular health bars are
+reported to work correctly.
