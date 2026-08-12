@@ -1,4 +1,5 @@
 import { BitBuffer } from '../network/protocol/bitBuffer';
+import { Config } from '../core/config';
 import { normalizeCharacterInventoryGears } from './GearInventory';
 import { PetHandler } from '../handlers/PetHandler';
 import { Character } from '../database/Database';
@@ -50,13 +51,6 @@ export class WorldEnter {
         value > 0 ? 3 : 0
     );
 
-    private static readonly NEWS_EVENT_REMAINING_SECONDS = 666 * 60 * 60;
-    private static readonly DEFAULT_NEWS_EVENT = {
-        icon: 'a_NewsPetXPIcon',
-        url: 'https://theminesa.studio',
-        body: 'The Minesa Studios',
-        tooltip: 'https://theminesa.studio'
-    };
 
     private static asRecord(value: unknown): Record<string, any> {
         return value && typeof value === 'object' ? value as Record<string, any> : {};
@@ -925,11 +919,11 @@ export class WorldEnter {
                 bb.writeMethod11(0, 1);
             }
 
-            bb.writeMethod13(WorldEnter.DEFAULT_NEWS_EVENT.icon);
-            bb.writeMethod13(WorldEnter.DEFAULT_NEWS_EVENT.url);
-            bb.writeMethod13(WorldEnter.DEFAULT_NEWS_EVENT.body);
-            bb.writeMethod13(WorldEnter.DEFAULT_NEWS_EVENT.tooltip);
-            bb.writeMethod4(now + WorldEnter.NEWS_EVENT_REMAINING_SECONDS);
+            bb.writeMethod13(Config.WORLD_NEWS_EVENT_ICON);
+            bb.writeMethod13(Config.WORLD_NEWS_EVENT_URL);
+            bb.writeMethod13(Config.WORLD_NEWS_EVENT_BODY);
+            bb.writeMethod13(Config.WORLD_NEWS_EVENT_TOOLTIP);
+            bb.writeMethod4(now + Config.WORLD_NEWS_EVENT_REMAINING_SECONDS);
         } else {
             bb.writeMethod6(0, 1);
         }

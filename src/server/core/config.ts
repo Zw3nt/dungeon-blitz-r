@@ -249,6 +249,15 @@ export const Config = {
     PASSWORD_RESET_URL,
     ALLOW_DEV_PASSWORD_RESET: parseBooleanEnv('ALLOW_DEV_PASSWORD_RESET', process.env.NODE_ENV !== 'production'),
     ALLOW_WEB_ACCOUNT_CREATION: parseBooleanEnv('ALLOW_WEB_ACCOUNT_CREATION', true),
+    // The world-enter payload always carries a "news event" banner (icon/url/body/tooltip
+    // plus a countdown timestamp); the client expects those fields whenever the surrounding
+    // section is present, so this can't be omitted without changing the packet schema. Only
+    // its content is configurable here for private deployments.
+    WORLD_NEWS_EVENT_ICON: parseStringEnv('WORLD_NEWS_EVENT_ICON', 'a_NewsPetXPIcon'),
+    WORLD_NEWS_EVENT_URL: parseStringEnv('WORLD_NEWS_EVENT_URL', 'https://game.ecliptia.net'),
+    WORLD_NEWS_EVENT_BODY: parseStringEnv('WORLD_NEWS_EVENT_BODY', 'Ecliptia Games'),
+    WORLD_NEWS_EVENT_TOOLTIP: parseStringEnv('WORLD_NEWS_EVENT_TOOLTIP', 'https://game.ecliptia.net'),
+    WORLD_NEWS_EVENT_REMAINING_SECONDS: parseNumberEnv('WORLD_NEWS_EVENT_REMAINING_SECONDS', 666 * 60 * 60),
     DISCORD_CLIENT_ID,
     DISCORD_CLIENT_SECRET,
     DISCORD_REDIRECT_URI,
