@@ -92,9 +92,24 @@
 
     window.RufflePlayer = window.RufflePlayer || {};
     window.__dbrSuperAnimStats = Object.create(null);
+    window.__dbrDebugEvents = [];
+    const debugTraceEnabled = hostParams.get("debug") === "1" || hostParams.has("debugTrace");
     window.JSRecordStat = function (name, value) {
-      if (name !== "frame" && name !== "dblogin" && name !== "Player") {
+      const isExistingStat = name === "frame" || name === "dblogin" || name === "Player";
+      if (!isExistingStat && !debugTraceEnabled) {
         return;
+      }
+      if (!isExistingStat) {
+        const event = {
+          hostTime: performance.now(),
+          wallTime: Date.now(),
+          name,
+          value
+        };
+        if (window.__dbrDebugEvents.length < 5000) {
+          window.__dbrDebugEvents.push(event);
+        }
+        console.debug("[DungeonBlitzTrace]", event);
       }
       const entry = window.__dbrSuperAnimStats[name] || {
         count: 0,
@@ -109,6 +124,14 @@
         entry.values.push(value);
       }
       window.__dbrSuperAnimStats[name] = entry;
+    };
+    window.__dbrExportDebugTrace = function () {
+      return JSON.stringify({
+        href: window.location.href,
+        exportedAt: new Date().toISOString(),
+        events: window.__dbrDebugEvents,
+        stats: window.__dbrSuperAnimStats
+      });
     };
     window.RufflePlayer.config = {
       allowScriptAccess: true,
@@ -361,6 +384,11 @@
         player.name = "DungeonBlitz";
         container.replaceChildren(player);
         await player.ruffle().load(objectSwfUrl);
+        if (debugTraceEnabled) {
+          player.ruffle().traceObserver = function (message) {
+            window.JSRecordStat("trace", String(message));
+          };
+        }
         hideHint();
       } catch (error) {
         console.error("[DungeonBlitzHost] Ruffle failed to start", error);

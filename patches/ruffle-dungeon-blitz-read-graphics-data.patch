@@ -45,12 +45,12 @@ index 95cc417d3..b540e6c05 100644
  use crate::avm2_stub_method;
 -use crate::display_object::TDisplayObject;
 -use crate::drawing::Drawing;
-+use crate::display_object::{TDisplayObject, TDisplayObjectContainer};
++use crate::display_object::{DisplayObject, TDisplayObject, TDisplayObjectContainer};
 +use crate::drawing::{Drawing, DrawingFill, DrawingLine, DrawingPath};
  use crate::string::{AvmString, WStr};
  use ruffle_render::shape_utils::{DrawCommand, FillRule, GradientType};
  use std::f64::consts::FRAC_1_SQRT_2;
-@@ -1342,13 +1342,146 @@ pub fn line_bitmap_style<'gc>(
+@@ -1342,13 +1342,152 @@ pub fn line_bitmap_style<'gc>(
  /// Implements `Graphics.readGraphicsData`
  pub fn read_graphics_data<'gc>(
      activation: &mut Activation<'_, 'gc>,
@@ -74,8 +74,14 @@ index 95cc417d3..b540e6c05 100644
 +                }
 +            }
 +
-+            let Some(drawing) = display_object.as_drawing() else {
-+                continue;
++            let drawing = match display_object {
++                DisplayObject::Graphic(graphic) => graphic.drawing_for_readback(),
++                _ => {
++                    let Some(drawing) = display_object.as_drawing() else {
++                        continue;
++                    };
++                    drawing.clone()
++                }
 +            };
 +            for path in drawing.paths() {
 +                let (style, commands, stroke) = match path {
@@ -206,7 +212,7 @@ diff --git a/core/src/display_object/graphic.rs b/core/src/display_object/graphi
 index 2a73ff9c2..61d6c5128 100644
 --- a/core/src/display_object/graphic.rs
 +++ b/core/src/display_object/graphic.rs
-@@ -114,7 +114,14 @@ impl<'gc> Graphic<'gc> {
+@@ -114,7 +114,22 @@ impl<'gc> Graphic<'gc> {
      }
  
      pub fn drawing_mut(&self) -> RefMut<'_, Drawing> {
@@ -220,6 +226,14 @@ index 2a73ff9c2..61d6c5128 100644
 +            })
 +            .borrow_mut()
      }
++
++    pub fn drawing_for_readback(&self) -> Drawing {
++        self.0
++            .drawing
++            .get()
++            .map(|drawing| drawing.borrow().clone())
++            .unwrap_or_else(|| Drawing::from_swf_shape(&self.0.shared.get().shape))
++    }
  
      pub fn set_avm2_class(self, mc: &Mutation<'gc>, class: Avm2ClassObject<'gc>) {
 diff --git a/core/src/drawing.rs b/core/src/drawing.rs
