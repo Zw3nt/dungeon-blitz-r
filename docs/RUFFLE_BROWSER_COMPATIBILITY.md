@@ -145,9 +145,38 @@ alter game physics. The original source order is synchronous:
 4. `class_154.method_444(am_CollisionObject, ..., collMan)` registers the
    collision lines before `Level.method_1195()` completes.
 
-The v5 candidate is intentionally isolated from v3/v4. It is not accepted
-until a real GPU-backed browser validates grounded idle/walk and the missing
-world region.
+The v5 candidate is intentionally isolated from v3/v4. It must stay on the
+test URL until the final manual browser check confirms grounded idle/walk and
+the missing world region on a real GPU-backed client.
+
+### v5 validation checkpoint
+
+2026-08-12 UTC:
+
+- GitHub Actions run `31552742588` (`Build Dungeon Blitz Ruffle v5`) completed
+  successfully for commit `c75b0c9`.
+- The CI artifact was deployed only to
+  `src/client/content/localhost/ruffle-dbr-v5/`; no production route, v3
+  runtime, PM2 process, or Caddy route was changed.
+- Authenticated HTTP checks returned `200` for the v5 play-test host page,
+  `/ruffle-dbr-v5/ruffle.js`, and `/ruffle-dbr-v5/DUNGEON_BLITZ_BUILD.txt`.
+- A Playwright Chromium run at
+  `/play-test/?v=5&renderer=wgpu-webgl&quality=medium&debug=1` selected
+  TutorialBoat character `Vf014603`, loaded
+  `/p/cbp/LevelsTut.swf` with status `200`, and opened the world WSS
+  connection.
+- Screenshots `/tmp/dbr-v5-tb-idlewalk-09-idle9.png` through
+  `/tmp/dbr-v5-tb-idlewalk-27-postleft3.png` show the player grounded on
+  TutorialBoat through idle, right-walk, post-right idle, left-walk, and
+  post-left idle samples. No continuous falling or camera runaway was visible,
+  and the boat/world layers rendered normally.
+- The same run reported no page errors and no console hits for
+  `PlaceByClass`, `PlaceObject`, `readGraphicsData`, `Collision`,
+  `RangeError`, `TypeError`, panic, or AVM2 error. The only non-game failures
+  were blocked GameAnalytics requests and the optional presence endpoint.
+
+Manual external browser validation is still requested before promoting v5 to a
+default runtime.
 
 ### Build and deploy v5
 
