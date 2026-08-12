@@ -56,8 +56,8 @@ jobs:
           test -f "${RUNNER_TEMP}/ruffle-dbr-v6/ruffle.js"
           find "${RUNNER_TEMP}/ruffle-dbr-v6" -type f -name '*.wasm' -print -quit | grep -q .
           grep -F 'Runtime: v6' "${RUNNER_TEMP}/ruffle-dbr-v6/DUNGEON_BLITZ_BUILD.txt"
-          grep -F 'DBR-CENSUS' "${RUNNER_TEMP}/ruffle-dbr-v6/DUNGEON_BLITZ_BUILD.txt"
-          grep -F 'DBR-CENSUS' patches/ruffle-dungeon-blitz-lifecycle-trace.patch
+          grep -F 'DBR-SEQ' "${RUNNER_TEMP}/ruffle-dbr-v6/DUNGEON_BLITZ_BUILD.txt"
+          grep -F 'DBR-SEQ' patches/ruffle-dungeon-blitz-lifecycle-trace.patch
 
       - name: Upload Ruffle v6 artifact
         uses: actions/upload-artifact@v4

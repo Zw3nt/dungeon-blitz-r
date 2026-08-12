@@ -685,6 +685,53 @@ out to be a Ruffle scheduling gap, in Ruffle itself. Whichever it is,
 revert/don't ship this census patch as part of that fix -- it's a
 temporary instrument, not part of the product.
 
+### v6 third version: dual name-based hook (recommended option (b) above, implemented)
+
+Rewrote `patches/ruffle-dungeon-blitz-lifecycle-trace.patch` to hook two
+places instead of one, both filtering by **raw name, not resolved class**,
+so a subclass override can't be missed the way the census version could:
+
+1. `core/src/avm2/activation.rs`: a new `Activation::dbr_seq_probe()`
+   method, called from both `op_call_property` and `op_call_prop_void`
+   (the two opcodes for ordinary `obj.method()` / `obj.method();` AS3
+   calls -- this is how `Main.method_1284` calls
+   `currGame.method_1636()`/`method_789()`, and how those in turn reach
+   `Level.method_1195`/`class_154.method_444`/`Entity.method_864`). It
+   checks the *raw* `Multiname::local_name()` -- available before the
+   receiver's class is resolved at all -- against the same 10-method
+   target list. Only on a match does it resolve `receiver.instance_class()`
+   and walk `Class::super_class()` (capped at 8 levels) to log the
+   receiver's actual runtime class chain, e.g. `class_87<-Game` if the
+   real ticked object turns out to be a `Game` subclass. This is exactly
+   the case the census version couldn't see.
+2. `core/src/avm2/function.rs`: kept a companion hook in `exec()` (the
+   choke point used by event-*dispatched* calls, like `Main.method_1284`
+   itself being invoked as a bound `Function` by the `ENTER_FRAME`
+   listener system -- confirmed in the census run to work via this path,
+   and confirmed to **not** go through `op_call_property` for that specific
+   call). Uses `.contains()` against `method.method_name()` rather than
+   exact match, since that string is namespace-qualified for at least some
+   private methods (`"Main/private/method_1284"`), not bare.
+
+Both hooks share the same 10-method target list, log at `tracing::warn!`
+(`[DBR-SEQ-A]` for the function.rs/event path, `[DBR-SEQ-B]` for the
+activation.rs/opcode path, so the two are distinguishable in captured
+console output), and each independently caps at 300 logged lines (not
+deduplicated this time -- the goal now is the actual frame-by-frame
+sequence/timing across a room transition, not just a one-time census).
+Verified both diff hunks apply cleanly against the pinned commit via a
+local round-trip test (fresh checkout of just the two files, apply,
+byte-compare) before pushing, the same way as every patch in this repo.
+
+Not yet run live as of this entry -- CI build was just triggered. Next:
+download the artifact, deploy to the isolated v6 harness, and capture a
+TutorialBoat -> Beach transition with both `DBR-SEQ-A` and `DBR-SEQ-B`
+lines correlated by arrival order (Playwright's console listener records
+receive-time, which for synchronous single-threaded WASM execution
+preserves real call order) to finally answer: does `class_154.method_444`
+(collision registration) log before or after the first `Entity.method_864`
+(gravity) for the newly-loaded room?
+
 ## Gender preview bug (2026-08-12, lead only, not traced)
 
 Confirmed server-side: no `previewGender`/`selectedGender` concept exists

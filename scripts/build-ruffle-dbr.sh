@@ -71,7 +71,7 @@ EOF
 if [[ "${enable_lifecycle_trace}" == "1" ]]; then
   cat >>"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
 Local patch: patches/ruffle-dungeon-blitz-lifecycle-trace.patch
-Diagnostic-only: logs [DBR-CENSUS] on room/collision/physics lifecycle calls
+Diagnostic-only: logs [DBR-SEQ] on room/collision/physics lifecycle calls
 EOF
 fi
 

@@ -1,59 +1,176 @@
-diff --git a/core/src/avm2/function.rs b/core/src/avm2/function.rs
-index 0000000..0000000 100644
+--- a/core/src/avm2/activation.rs
++++ b/core/src/avm2/activation.rs
+@@ -29,11 +29,36 @@
+ use crate::tag_utils::SwfMovie;
+ use gc_arena::Gc;
+ use ruffle_macros::istr;
+-use std::cell::Cell;
++use std::cell::{Cell, RefCell};
+ use std::cmp::{Ordering, min};
+ use std::sync::Arc;
+ use swf::avm2::types::MethodFlags as AbcMethodFlags;
+ 
++// Dungeon Blitz diagnostic-only lifecycle sequence probe (v6 isolated runtime). Covers
++// ordinary AS3 `obj.method()`/`obj.method(); // no return used` bytecode (callproperty /
++// callpropvoid), which is how Game/Level/Entity/class_154's instance methods are called.
++// Filters on the raw multiname's local name *before* it resolves to a class, so it can't
++// miss a call just because the receiver turns out to be a subclass overriding the method
++// (the earlier function.rs-only hook filtered by resolved bound_class, which could miss
++// exactly that case). See function.rs for the companion hook covering event-dispatched
++// calls (e.g. ENTER_FRAME), which never go through these opcodes.
++thread_local! {
++    static DBR_SEQ_B_COUNT: RefCell<u32> = const { RefCell::new(0) };
++}
++const DBR_SEQ_B_CAP: u32 = 300;
++const DBR_SEQ_B_TARGETS: [&str; 10] = [
++    "method_1284",
++    "method_1636",
++    "method_789",
++    "method_1296",
++    "method_1970",
++    "method_1366",
++    "method_1770",
++    "method_864",
++    "method_1195",
++    "method_444",
++];
++
+ /// Represents a single activation of a given AVM2 function or keyframe.
+ pub struct Activation<'a, 'gc: 'a> {
+     /// The number of locals this method uses.
+@@ -1105,6 +1130,50 @@
+         Ok(())
+     }
+ 
++    // Dungeon Blitz diagnostic-only lifecycle sequence probe (v6 isolated runtime, see top
++    // of file). Cheap local_name() precheck first; only walks the superclass chain and
++    // formats/logs the rare matches.
++    fn dbr_seq_probe(&mut self, multiname: &Multiname<'gc>, receiver: Value<'gc>) {
++        let Some(name) = multiname.local_name() else {
++            return;
++        };
++        let name = name.to_utf8_lossy();
++        if !DBR_SEQ_B_TARGETS.contains(&name.as_ref()) {
++            return;
++        }
++
++        let should_log = DBR_SEQ_B_COUNT.with(|c| {
++            let mut c = c.borrow_mut();
++            if *c >= DBR_SEQ_B_CAP {
++                false
++            } else {
++                *c += 1;
++                true
++            }
++        });
++        if !should_log {
++            return;
++        }
++
++        let receiver_class = receiver.instance_class(self);
++        let mut chain = String::new();
++        let mut current = Some(receiver_class);
++        let mut depth = 0;
++        while let Some(c) = current {
++            if depth > 0 {
++                chain.push_str("<-");
++            }
++            chain.push_str(&c.name().local_name().to_utf8_lossy());
++            current = c.super_class();
++            depth += 1;
++            if depth > 8 {
++                break;
++            }
++        }
++
++        tracing::warn!("[DBR-SEQ-B] call={} receiver_chain={}", name, chain);
++    }
++
+     fn op_call_property(
+         &mut self,
+         multiname: Gc<'gc, Multiname<'gc>>,
+@@ -1113,6 +1182,7 @@
+         let args = self.get_args(arg_count);
+         let multiname = multiname.fill_with_runtime_params(self)?;
+         let receiver = self.pop_stack().null_check(self, Some(&multiname))?;
++        self.dbr_seq_probe(&multiname, receiver);
+ 
+         let value = receiver.call_property(&multiname, args, self)?;
+ 
+@@ -1145,6 +1215,7 @@
+         let args = self.get_args(arg_count);
+         let multiname = multiname.fill_with_runtime_params(self)?;
+         let receiver = self.pop_stack().null_check(self, Some(&multiname))?;
++        self.dbr_seq_probe(&multiname, receiver);
+ 
+         receiver.call_property(&multiname, args, self)?;
+ 
 --- a/core/src/avm2/function.rs
 +++ b/core/src/avm2/function.rs
-@@ -9,9 +9,18 @@
+@@ -9,9 +9,33 @@
  use crate::string::WString;
  use gc_arena::{Collect, Gc};
  use std::borrow::Cow;
 -use std::cell::Cell;
 +use std::cell::{Cell, RefCell};
-+use std::collections::HashSet;
  use std::fmt;
-
-+// Dungeon Blitz diagnostic-only method census (v6 isolated runtime). Logs each distinct
-+// "ClassName/method_name" combination exactly once, up to a hard cap, so a live run can
-+// discover the real call graph instead of guessing method names from static analysis.
+ 
++// Dungeon Blitz diagnostic-only lifecycle sequence probe (v6 isolated runtime). Covers
++// calls that don't go through activation.rs's callproperty opcodes (e.g. event-dispatched
++// listeners like Main's ENTER_FRAME handler, invoked as a bound Function, not AS3
++// `obj.method()` bytecode). See activation.rs for the companion hook that covers ordinary
++// property calls. `.contains()` (not exact match) because Method::method_name() returns a
++// namespace-qualified string for at least some private methods (e.g.
++// "Main/private/method_1284"), not a bare identifier.
 +thread_local! {
-+    static DBR_CENSUS_SEEN: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
++    static DBR_SEQ_A_COUNT: RefCell<u32> = const { RefCell::new(0) };
 +}
-+const DBR_CENSUS_CAP: usize = 4000;
++const DBR_SEQ_A_CAP: u32 = 300;
++const DBR_SEQ_A_TARGETS: [&str; 10] = [
++    "method_1284",
++    "method_1636",
++    "method_789",
++    "method_1296",
++    "method_1970",
++    "method_1366",
++    "method_1770",
++    "method_864",
++    "method_1195",
++    "method_444",
++];
 +
  /// Represents a bound method.
  #[derive(Clone, Collect)]
  #[collect(no_drop)]
-@@ -198,6 +207,34 @@ pub fn exec<'gc>(
+@@ -198,6 +222,31 @@
  ) -> Result<Value<'gc>, Error<'gc>> {
      let mc = activation.gc();
-
-+    // Dungeon Blitz diagnostic-only method census (v6 isolated runtime, see top of file).
-+    if let Some(class) = method
-+        .method_association()
-+        .and_then(|assoc| assoc.bound_class())
+ 
++    // Dungeon Blitz diagnostic-only lifecycle sequence probe (v6 isolated runtime, see
++    // top of file). Cheap method-name precheck first; only formats/logs the rare matches.
 +    {
-+        let class_name = class.name().local_name().to_utf8_lossy().into_owned();
-+        if matches!(
-+            class_name.as_str(),
-+            "Entity" | "Level" | "Game" | "Main" | "class_154"
-+        ) {
-+            let key = format!("{}/{}", class_name, method.method_name());
-+            let should_log = DBR_CENSUS_SEEN.with(|seen| {
-+                let mut seen = seen.borrow_mut();
-+                if seen.len() >= DBR_CENSUS_CAP {
-+                    false
-+                } else if seen.contains(&key) {
++        let dbr_name = method.method_name();
++        if DBR_SEQ_A_TARGETS
++            .iter()
++            .any(|target| dbr_name.contains(target))
++        {
++            let should_log = DBR_SEQ_A_COUNT.with(|c| {
++                let mut c = c.borrow_mut();
++                if *c >= DBR_SEQ_A_CAP {
 +                    false
 +                } else {
-+                    seen.insert(key.clone());
++                    *c += 1;
 +                    true
 +                }
 +            });
 +            if should_log {
-+                tracing::warn!("[DBR-CENSUS] {}", key);
++                let mut dbr_full = WString::new();
++                display_function(&mut dbr_full, method);
++                tracing::warn!("[DBR-SEQ-A] {}", dbr_full.to_utf8_lossy());
 +            }
 +        }
 +    }
 +
      let caller_dxns = activation.default_xml_namespace();
-
+ 
      let ret = match method.method_kind() {
