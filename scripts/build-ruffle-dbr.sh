@@ -7,6 +7,7 @@ output_dir="${1:-${project_dir}/src/client/content/localhost/ruffle-dbr-build}"
 ruffle_pr_head="684cf8270166b9230216002f4e617778468c84c3"
 compat_patch="${project_dir}/patches/ruffle-dungeon-blitz-read-graphics-data.patch"
 goto_placebyclass_patch="${project_dir}/patches/ruffle-dungeon-blitz-placebyclass-goto.patch"
+runtime_label="${DBR_RUNTIME_LABEL:-v4}"
 
 for command in git npm cargo rustup wasm-bindgen; do
   command -v "${command}" >/dev/null || {
@@ -48,8 +49,11 @@ install -d -m 755 "${output_dir}"
 cp -a "${source_dir}/web/packages/selfhosted/dist/." "${output_dir}/"
 cat >"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
 Dungeon Blitz browser compatibility build
+Runtime: ${runtime_label}
 Base: ruffle-rs/ruffle PR #23790 at ${ruffle_pr_head}
 Local patch: patches/ruffle-dungeon-blitz-read-graphics-data.patch
+Graphics compatibility: fills plus colored SWF strokes for world collision
+Local patch: patches/ruffle-dungeon-blitz-placebyclass-goto.patch
 Build profile: web-wasm-extensions opt-level=2 codegen-units=256
 EOF
 

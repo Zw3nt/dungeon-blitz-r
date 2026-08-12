@@ -33,7 +33,7 @@ index 678383496..6d41c4dcb 100644
              ("flash.filters", "BevelFilter", bevelfilter),
              ("flash.filters", "BitmapFilter", bitmapfilter),
 diff --git a/core/src/avm2/globals/flash/display/graphics.rs b/core/src/avm2/globals/flash/display/graphics.rs
-index 95cc417d3..97018e3dc 100644
+index 95cc417d3..b540e6c05 100644
 --- a/core/src/avm2/globals/flash/display/graphics.rs
 +++ b/core/src/avm2/globals/flash/display/graphics.rs
 @@ -18,8 +18,8 @@ use crate::avm2::value::Value;
@@ -43,11 +43,11 @@ index 95cc417d3..97018e3dc 100644
 -use crate::display_object::TDisplayObject;
 -use crate::drawing::Drawing;
 +use crate::display_object::{TDisplayObject, TDisplayObjectContainer};
-+use crate::drawing::{Drawing, DrawingFill, DrawingPath};
++use crate::drawing::{Drawing, DrawingFill, DrawingLine, DrawingPath};
  use crate::string::{AvmString, WStr};
  use ruffle_render::shape_utils::{DrawCommand, FillRule, GradientType};
  use std::f64::consts::FRAC_1_SQRT_2;
-@@ -1342,13 +1342,121 @@ pub fn line_bitmap_style<'gc>(
+@@ -1342,13 +1342,146 @@ pub fn line_bitmap_style<'gc>(
  /// Implements `Graphics.readGraphicsData`
  pub fn read_graphics_data<'gc>(
      activation: &mut Activation<'_, 'gc>,
@@ -75,22 +75,46 @@ index 95cc417d3..97018e3dc 100644
 +                continue;
 +            };
 +            for path in drawing.paths() {
-+            if let DrawingPath::Fill(DrawingFill {
-+                style, commands, ..
-+            }) = path
-+            {
++                let (style, commands, stroke) = match path {
++                    DrawingPath::Fill(DrawingFill {
++                        style, commands, ..
++                    }) => (style, commands, None),
++                    DrawingPath::Line(DrawingLine {
++                        style, commands, ..
++                    }) => (style.fill_style(), commands, Some(style)),
++                };
 +                let FillStyle::Color(color) = style else {
 +                    continue;
 +                };
-+                result.push(
-+                    activation.avm2().classes().graphicssolidfill.construct(
-+                        activation,
-+                        &[
-+                            Value::Integer(color.to_rgb() as i32),
-+                            Value::Number(f64::from(color.a) / 255.0),
-+                        ],
-+                    )?,
-+                );
++                let solid_fill = activation.avm2().classes().graphicssolidfill.construct(
++                    activation,
++                    &[
++                        Value::Integer(color.to_rgb() as i32),
++                        Value::Number(f64::from(color.a) / 255.0),
++                    ],
++                )?;
++
++                if let Some(stroke) = stroke {
++                    // Dungeon Blitz encodes room floor and trigger lines as SWF
++                    // strokes. Preserve the Flash GraphicsStroke -> GraphicsPath
++                    // ordering so its collision parser sees the line color.
++                    result.push(
++                        activation.avm2().classes().graphicsstroke.construct(
++                            activation,
++                            &[
++                                Value::Number(stroke.width().to_pixels()),
++                                Value::Bool(false),
++                                AvmString::new_utf8(activation.gc(), "normal").into(),
++                                AvmString::new_utf8(activation.gc(), "none").into(),
++                                AvmString::new_utf8(activation.gc(), "round").into(),
++                                Value::Number(3.0),
++                                solid_fill,
++                            ],
++                        )?,
++                    );
++                } else {
++                    result.push(solid_fill);
++                }
 +
 +                let mut path_commands = Vec::new();
 +                let mut path_data = Vec::new();
@@ -154,15 +178,16 @@ index 95cc417d3..97018e3dc 100644
 +                        &[commands.into(), data.into()],
 +                    )?,
 +                );
-+                result.push(
-+                    activation
-+                        .avm2()
-+                        .classes()
-+                        .graphicsendfill
-+                        .construct(activation, &[])?,
-+                );
++                if stroke.is_none() {
++                    result.push(
++                        activation
++                            .avm2()
++                            .classes()
++                            .graphicsendfill
++                            .construct(activation, &[])?,
++                    );
++                }
 +            }
-+        }
 +        }
 +    }
 +
@@ -195,7 +220,7 @@ index 2a73ff9c2..61d6c5128 100644
  
      pub fn set_avm2_class(self, mc: &Mutation<'gc>, class: Avm2ClassObject<'gc>) {
 diff --git a/core/src/drawing.rs b/core/src/drawing.rs
-index 6a87ca93d..159ec0a25 100644
+index 6a87ca93d..3d34b0db7 100644
 --- a/core/src/drawing.rs
 +++ b/core/src/drawing.rs
 @@ -415,6 +415,10 @@ impl Drawing {
@@ -209,7 +234,7 @@ index 6a87ca93d..159ec0a25 100644
  }
  
  impl BitmapSource for Drawing {
-@@ -430,10 +434,10 @@ impl BitmapSource for Drawing {
+@@ -430,21 +434,21 @@ impl BitmapSource for Drawing {
  }
  
  #[derive(Debug, Clone)]
@@ -224,7 +249,13 @@ index 6a87ca93d..159ec0a25 100644
  }
  
  #[derive(Debug, Clone)]
-@@ -444,7 +448,7 @@ struct DrawingLine {
+-struct DrawingLine {
+-    style: LineStyle,
+-    commands: Vec<DrawCommand>,
++pub(crate) struct DrawingLine {
++    pub style: LineStyle,
++    pub commands: Vec<DrawCommand>,
+     is_closed: bool,
  }
  
  #[derive(Debug, Clone)]

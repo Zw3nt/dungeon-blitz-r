@@ -72,14 +72,23 @@
     const requestedRenderer = hostParams.get("renderer");
     const preferredRenderer = ["webgpu", "wgpu-webgl", "webgl", "canvas"].includes(requestedRenderer)
       ? requestedRenderer
-      : "webgpu";
+      : "wgpu-webgl";
     const requestedQuality = hostParams.get("quality");
     const gameQuality = ["low", "medium", "high", "best"].includes(requestedQuality)
       ? requestedQuality
       : "medium";
     const requestedRuffleVersion = hostParams.get("v");
-    const ruffleRuntimeVersion = requestedRuffleVersion === "4" ? "4" : "3";
-    const ruffleRuntimeUrl = `/ruffle-dbr-v${ruffleRuntimeVersion}/ruffle.js`;
+    const ruffleRuntimeVersion = ["4", "5"].includes(requestedRuffleVersion)
+      ? requestedRuffleVersion
+      : "3";
+    // Each isolated runtime has its own immutable URL. This prevents a cached
+    // failed bootstrap or WASM response from crossing test-runtime boundaries.
+    const ruffleRuntimeBuild = ruffleRuntimeVersion === "4"
+      ? "?build=dbr-v4-684cf827"
+      : ruffleRuntimeVersion === "5"
+        ? "?build=dbr-v5-tutorialboat-collision-strokes-1"
+        : "";
+    const ruffleRuntimeUrl = `/ruffle-dbr-v${ruffleRuntimeVersion}/ruffle.js${ruffleRuntimeBuild}`;
 
     window.RufflePlayer = window.RufflePlayer || {};
     window.__dbrSuperAnimStats = Object.create(null);
@@ -175,10 +184,14 @@
     let discordPendingPollUntil = 0;
     let discordReloadNonce = 0;
 
-    function showFallback() {
+    function showFallback(error) {
       const status = document.getElementById("ruffle-status");
       status.hidden = false;
-      status.innerHTML = "<p>Oyun başlatılamadı. Sayfayı yenileyip tekrar dene.</p>";
+      const debug = new URLSearchParams(window.location.search).get("debug") === "1";
+      const detail = debug && error
+        ? `<pre style="max-width:90vw;overflow:auto;white-space:pre-wrap;text-align:left">${String(error.stack || error.message || error).replace(/[&<>"']/g, function (character) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]; })}</pre>`
+        : "";
+      status.innerHTML = `<p>Oyun başlatılamadı. Sayfayı yenileyip tekrar dene.</p>${detail}`;
     }
 
     function hideHint() {
@@ -351,7 +364,7 @@
         hideHint();
       } catch (error) {
         console.error("[DungeonBlitzHost] Ruffle failed to start", error);
-        showFallback();
+        showFallback(error);
       }
     }
 
@@ -361,7 +374,7 @@
         await embedDungeonBlitzSwf();
       } catch (error) {
         console.error("[DungeonBlitzHost] Ruffle runtime failed to load", error);
-        showFallback();
+        showFallback(error);
       }
     }
 

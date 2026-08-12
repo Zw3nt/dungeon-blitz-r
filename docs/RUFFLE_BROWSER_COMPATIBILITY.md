@@ -119,6 +119,53 @@ CARGO_BUILD_JOBS=1 \
 The output directory is a self-hosted Ruffle distribution containing
 `ruffle.js`, the WASM bundle, and `DUNGEON_BLITZ_BUILD.txt`.
 
+## TutorialBoat collision investigation and isolated v5 candidate
+
+`LevelsTut.swf` contains `a_Level_TutorialBoat`, whose room
+`a_Room_TutorialBoat_R01` places `am_CollisionObject`. That object contains
+the floor and trigger geometry as colored **SWF strokes**: its principal
+shape is character `156` and includes the floor-colored `LINESTYLE2` paths.
+
+Dungeon Blitz parses these paths by calling
+`Graphics.readGraphicsData(false)` and reading each
+`GraphicsStroke -> GraphicsPath` pair into `CollisionManager`. The initial
+local graphics compatibility patch returned fills only, so it could render
+paper dolls but discarded TutorialBoat's stroke-only collision object. This
+is a concrete client-side explanation for a missing floor while the server
+continues to receive no falling movement packets.
+
+The updated graphics patch preserves colored stroke paths as
+`GraphicsStroke -> GraphicsPath`; it does not hardcode player coordinates or
+alter game physics. The original source order is synchronous:
+
+1. `ResourceManager` completes `LevelsTut.swf`;
+2. `Level.method_1195()` creates `a_Level_TutorialBoat`;
+3. it creates `a_Room_TutorialBoat_R01` and recursively processes its
+   children;
+4. `class_154.method_444(am_CollisionObject, ..., collMan)` registers the
+   collision lines before `Level.method_1195()` completes.
+
+The v5 candidate is intentionally isolated from v3/v4. It is not accepted
+until a real GPU-backed browser validates grounded idle/walk and the missing
+world region.
+
+### Build and deploy v5
+
+The GitHub Actions workflow `.github/workflows/build-ruffle-dbr-v5.yml`
+builds the patched artifact as `ruffle-dbr-v5`. After downloading that
+artifact to the VPS:
+
+```bash
+./scripts/deploy-ruffle-dbr-v5.sh /path/to/ruffle-dbr-v5.zip
+```
+
+This only installs `src/client/content/localhost/ruffle-dbr-v5/`. Test it
+only at:
+
+```text
+https://dungenblitz.ecliptia.net/play-test/?v=5&renderer=wgpu-webgl
+```
+
 ### GitHub Actions artifact
 
 `.github/workflows/build-ruffle-dbr-v4.yml` builds the same pinned source and
