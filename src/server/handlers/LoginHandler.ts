@@ -7,6 +7,7 @@ import { JsonAdapter } from '../database/JsonAdapter';
 import { UserAccount } from '../database/Database';
 import { GlobalState, PendingTransfer } from '../core/GlobalState';
 import {
+    hashClientPasswordInput,
     isValidPasswordInput,
     normalizeAccountIdentifier,
     unmaskChallengeXorClientPassword,
@@ -396,13 +397,39 @@ export class LoginHandler {
         await client.resetForLoginCycle('login create');
 
         const payload = LoginHandler.parseLoginPayload(data);
-        const email = payload?.email ?? '';
-        LoginHandler.rejectLogin(
-            client,
-            email,
-            'in-game account creation is disabled; Discord /create-account is required',
-            DISCORD_ACCOUNT_CREATE_MESSAGE
-        );
+        if (!payload) {
+            LoginHandler.rejectLogin(client, '', 'invalid account creation payload');
+            return;
+        }
+
+        const { email, password } = payload;
+        if (!Config.ALLOW_WEB_ACCOUNT_CREATION) {
+            LoginHandler.rejectLogin(
+                client,
+                email,
+                'in-game account creation is disabled; Discord /create-account is required',
+                DISCORD_ACCOUNT_CREATE_MESSAGE
+            );
+            return;
+        }
+
+        try {
+            const existing = await LoginHandler.db.getAccount(email);
+            if (existing) {
+                LoginHandler.rejectLogin(client, email, 'account already exists', INVALID_CREDENTIALS_MESSAGE);
+                return;
+            }
+
+            // The Flash registration packet uses the same client-side password
+            // representation as login. Hash that value; never persist plaintext.
+            const passwordRecord = await hashClientPasswordInput(
+                unmaskChallengeXorClientPassword(password, client.challengeStr)
+            );
+            const account = await LoginHandler.db.createAccount(email, passwordRecord);
+            await LoginHandler.completeAuthentication(client, account, 'web account creation', false);
+        } catch (err) {
+            LoginHandler.rejectLogin(client, email, `account creation failed: ${(err as Error).message}`, INVALID_CREDENTIALS_MESSAGE);
+        }
     }
 
     static async handleLoginAuthenticate(client: Client, data: Buffer): Promise<void> {

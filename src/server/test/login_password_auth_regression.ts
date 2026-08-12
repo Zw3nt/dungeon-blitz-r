@@ -6,6 +6,7 @@ import * as path from 'path';
 import { CONCURRENT_ACCOUNT_EMAIL_MESSAGE, LoginHandler } from '../handlers/LoginHandler';
 import { JsonAdapter } from '../database/JsonAdapter';
 import { GlobalState } from '../core/GlobalState';
+import { Config } from '../core/config';
 import { BitBuffer } from '../network/protocol/bitBuffer';
 import { BitReader } from '../network/protocol/bitReader';
 import {
@@ -159,12 +160,50 @@ async function createDiscordBootstrapAccount(adapter: JsonAdapter): Promise<{ em
 }
 
 async function testDirectRegistrationIsDisabled(accountsPath: string): Promise<void> {
-    const client = createFakeClient();
-    await LoginHandler.handleLoginCreate(client as any, buildLoginPacket('  NewUser@Example.COM ', 'correct-password'));
+    const previous = Config.ALLOW_WEB_ACCOUNT_CREATION;
+    (Config as any).ALLOW_WEB_ACCOUNT_CREATION = false;
+    try {
+        const client = createFakeClient();
+        await LoginHandler.handleLoginCreate(client as any, buildLoginPacket('  NewUser@Example.COM ', 'correct-password'));
 
-    assertLoginFailed(client, 'direct in-game account registration');
-    assert.equal(getLastPopupMessage(client), 'Create your account in Discord with /create-account.');
-    assert.deepEqual(await readAccounts(accountsPath), [], 'direct password registration must not create an account');
+        assertLoginFailed(client, 'direct in-game account registration');
+        assert.equal(getLastPopupMessage(client), 'Create your account in Discord with /create-account.');
+        assert.deepEqual(await readAccounts(accountsPath), [], 'direct password registration must not create an account');
+    } finally {
+        (Config as any).ALLOW_WEB_ACCOUNT_CREATION = previous;
+    }
+}
+
+async function testWebAccountCreationCreatesAccountWhenEnabled(accountsPath: string): Promise<void> {
+    assert.equal(Config.ALLOW_WEB_ACCOUNT_CREATION, true, 'this test assumes the default-enabled config');
+
+    const client = createFakeClient();
+    await LoginHandler.handleLoginCreate(client as any, buildLoginPacket('web-created@example.com', 'web-password'));
+
+    assert.equal(client.authenticated, true, 'web account creation should authenticate the new client');
+    assert.equal(client.account?.email, 'web-created@example.com', 'web account creation should load the new account');
+    assert.equal(client.sentPackets.some((packet) => packet.id === 0x15), true, 'web account creation should send character list');
+
+    const accounts = await readAccounts(accountsPath);
+    const created = accounts.find((acc) => acc.email === 'web-created@example.com');
+    assert.ok(created, 'web account creation should persist the new account');
+    assert.equal(created.password, undefined, 'web account creation must not store a plaintext password');
+    assert.ok(created.passwordHash, 'web account creation must store a password hash');
+
+    const loginClient = createFakeClient();
+    await LoginHandler.handleLoginAuthenticate(loginClient as any, buildLoginPacket('web-created@example.com', 'web-password'));
+    assert.equal(loginClient.authenticated, true, 'the freshly created web account should log back in with its password');
+}
+
+async function testWebAccountCreationRejectsExistingEmail(accountsPath: string): Promise<void> {
+    const before = await readAccounts(accountsPath);
+
+    const client = createFakeClient();
+    await LoginHandler.handleLoginCreate(client as any, buildLoginPacket('web-created@example.com', 'another-password'));
+
+    assertLoginFailed(client, 'web account creation for an existing email');
+    assert.equal(getLastPopupMessage(client), 'Invalid email or password');
+    assert.deepEqual(await readAccounts(accountsPath), before, 'a duplicate web account creation attempt must not modify accounts');
 }
 
 async function testInGameCreateCannotSetDiscordAccountPassword(accountsPath: string, adapter: JsonAdapter): Promise<void> {
@@ -173,7 +212,11 @@ async function testInGameCreateCannotSetDiscordAccountPassword(accountsPath: str
     await LoginHandler.handleLoginCreate(client as any, buildLoginPacket(`  ${alias.toUpperCase()} `, 'correct-password'));
 
     assertLoginFailed(client, 'in-game password setup for a Discord account');
-    assert.equal(getLastPopupMessage(client), 'Create your account in Discord with /create-account.');
+    assert.equal(
+        getLastPopupMessage(client),
+        'Invalid email or password',
+        'a Discord-linked email is already registered, so creation must fail as a duplicate account, not overwrite it'
+    );
 
     const accounts = await readAccounts(accountsPath);
     assert.equal(accounts.length, 1, 'rejected in-game setup should keep exactly one account');
@@ -199,7 +242,11 @@ async function testInGameCreateDoesNotOverwriteBotPassword(accountsPath: string)
     await LoginHandler.handleLoginCreate(client as any, buildLoginPacket('newuser@example.com', 'second-password'));
 
     assertLoginFailed(client, 'in-game overwrite of a bot-set password');
-    assert.equal(getLastPopupMessage(client), 'Create your account in Discord with /create-account.');
+    assert.equal(
+        getLastPopupMessage(client),
+        'Invalid email or password',
+        'the email is already registered, so creation must fail as a duplicate account, not overwrite it'
+    );
     const after = await readAccounts(accountsPath);
     assert.equal(after.length, 1, 'duplicate password setup must not create another account');
     assert.equal(after[0].passwordHash, beforeHash, 'duplicate password setup must not overwrite password hash');
@@ -379,7 +426,11 @@ async function testConcurrentEmailIdentityAllowsCharacterList(accountsPath: stri
             secondClient as any,
             buildLoginPacket('second-primary@example.com', 'x')
         );
-        assert.equal(getLastPopupMessage(secondClient), 'Create your account in Discord with /create-account.');
+        assert.equal(
+            getLastPopupMessage(secondClient),
+            'Invalid email or password',
+            'the email is already registered, so creation must fail as a duplicate account'
+        );
     } finally {
         GlobalState.clients.delete(activeClient as any);
     }
@@ -634,7 +685,11 @@ async function testPendingDiscordOAuthLoginDoesNotAuthorizeCreatePacket(accounts
     await LoginHandler.handleLoginCreate(client as any, buildLoginPacket('oauth-create@example.com', 'short'));
 
     assertLoginFailed(client, 'pending OAuth must not authorize an account-create packet');
-    assert.equal(getLastPopupMessage(client), 'Create your account in Discord with /create-account.');
+    assert.equal(
+        getLastPopupMessage(client),
+        'Invalid email or password',
+        'the email is already registered (Discord-linked), so creation must fail as a duplicate account'
+    );
     assert.equal(GlobalState.pendingDiscordOAuthLogins.size, 1, 'rejected create packet should preserve the OAuth handoff for login/version fallback');
 }
 
@@ -662,6 +717,8 @@ async function main(): Promise<void> {
         await testPendingDiscordOAuthLoginDelaysCharacterListAfterVersion(accountsPath, savesDir);
         await testPendingDiscordOAuthLoginAuthenticateFallback(accountsPath, savesDir);
         await testPendingDiscordOAuthLoginDoesNotAuthorizeCreatePacket(accountsPath, savesDir);
+        await testWebAccountCreationCreatesAccountWhenEnabled(accountsPath);
+        await testWebAccountCreationRejectsExistingEmail(accountsPath);
         console.log('login_password_auth_regression: ok');
     } finally {
         LoginHandler.db = originalDb;
