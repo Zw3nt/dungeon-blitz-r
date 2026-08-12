@@ -291,6 +291,31 @@ https://dungenblitz.ecliptia.net/play-test/?v=4
 
 `/play-test/` and `/play-test/?v=3` continue to load `/ruffle-dbr-v3/`.
 
+### Generic room-transition spawn/collision race (entry point for next session)
+
+Real testing found the player fall through the floor once, specifically on
+the TutorialBoat -> Beach transition's first spawn (see the top-level
+handoff notes for this investigation). `Level.method_1195` (methodIdx 1226
+in `DungeonBlitz.swf`) is the shared level-construction entry point but is
+mostly generic bookkeeping; it is not where a room's children (and their
+collision objects) get recursively instantiated per-level. That lives in
+level-specific classes bundled inside each `LevelsXX.swf`. For
+`LevelsTut.swf` specifically, `ffdec-cli -export symbolClass` (or listing
+`abc.instances` with the same `swfPatchUtils` tooling used for the arrow
+investigation above) shows the relevant classes: `a_Level_TutorialBoat`,
+`a_Room_TutorialBoat_R01`, `a_PlayerSpawn`, `a_LevelDirector`,
+`a_RoomDirector`. Since the bug reproduced on a *transition between two
+different level SWFs* rather than within one already-loaded level, the
+generic fix is most likely in `a_LevelDirector`/`a_RoomDirector` (present,
+under those or equivalent obfuscated names, in every `LevelsXX.swf`) or in
+whatever base `Level`/`Room` class they extend in `DungeonBlitz.swf` --
+specifically wherever player spawn is triggered relative to the new room's
+collision-object registration (`class_154.method_444`) completing. This has
+not been traced yet; do that next, the same way the TutorialBoat collision
+stroke bug was traced (grep for `Loader`/`addEventListener`/`Event.COMPLETE`
+around the spawn call to find whether spawn can run before an
+asynchronously-loaded room's collision finishes registering).
+
 ### Required v4 acceptance test
 
 A v4 build is **not** considered successful until a normal browser test proves:
