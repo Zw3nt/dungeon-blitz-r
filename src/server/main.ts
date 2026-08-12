@@ -43,6 +43,7 @@ import { registerAdminControlApi } from './integrations/AdminControlApi';
 import { ProjectInfo } from './core/ProjectInfo';
 import { JsonAdapter } from './database/JsonAdapter';
 import * as path from 'path';
+import { RuffleSocketProxy } from './network/RuffleSocketProxy';
 
 import { StaticServer } from './core/StaticServer';
 
@@ -215,26 +216,37 @@ router.register(0xF0, PetHandler.handlePetSpeedUp);
 router.register(0x106, SigilHandler.handleRoyalSigilStorePurchase);
 
 let policyServer: PolicyServer | null = null;
-const staticServer = new StaticServer(Config.STATIC_PORT, '../client/content/localhost', Config.BIND_HOST);
+const staticServer = new StaticServer(
+    Config.STATIC_PORT,
+    '../client/content/localhost',
+    Config.STATIC_BIND_HOST
+);
 registerDiscordMaintenanceApi(staticServer);
 registerAdminControlApi(staticServer);
-const gameServer = new GameServer(Config.PORTS[0], router, Config.BIND_HOST);
+const gameServer = new GameServer(Config.PORTS[0], router, Config.GAME_BIND_HOST);
+const ruffleSocketProxy = new RuffleSocketProxy(
+    Config.RUFFLE_SOCKET_PROXY_PORT,
+    Config.RUFFLE_SOCKET_PROXY_BIND_HOST,
+    Config.PORTS[0],
+    '127.0.0.1'
+);
 
 async function startServers(): Promise<void> {
     await JsonAdapter.initializeMongoGameData();
 
     if (Config.ENABLE_POLICY_SERVER) {
-        policyServer = new PolicyServer(Config.POLICY_PORT, Config.BIND_HOST);
+        policyServer = new PolicyServer(Config.POLICY_PORT, Config.POLICY_BIND_HOST);
         policyServer.start();
     } else {
         console.log(
-            `[Policy] Dedicated policy server disabled; serving socket policy inline on ${Config.BIND_HOST}:${Config.PORTS[0]}`
+            `[Policy] Dedicated policy server disabled; serving socket policy inline on ${Config.GAME_BIND_HOST}:${Config.PORTS[0]}`
         );
     }
 
     staticServer.start();
     AILogic.start();
     gameServer.start();
+    ruffleSocketProxy.start();
 }
 
 void startServers().catch((error) => {
@@ -255,6 +267,7 @@ function shutdown(signal: string, exitCode: number, onComplete?: () => void): vo
     const tasks = [
         staticServer.stop(),
         gameServer.stop(),
+        ruffleSocketProxy.stop(),
         policyServer?.stop() ?? Promise.resolve(),
         JsonAdapter.closeMongoGameData()
     ];

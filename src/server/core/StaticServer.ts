@@ -12,6 +12,7 @@ import { SocialHandler } from '../handlers/SocialHandler';
 import { GlobalState } from './GlobalState';
 import { DiscordAccountLinkService } from '../integrations/DiscordAccountLinkService';
 import { JsonAdapter } from '../database/JsonAdapter';
+import { registerWebAccessGate } from '../integrations/WebAccessGate';
 import { UserAccount } from '../database/Database';
 import {
     hashPlaintextPasswordForClient,
@@ -161,6 +162,23 @@ export class StaticServer {
             console.log(`[StaticServer] Prepared DungeonBlitz.swf variant for ${mode} mode (${locale}).`);
         }
         return buffer;
+    }
+
+    private getDebugPlayerSwfBuffer(
+        locale: DungeonBlitzSwfLocale,
+        buildName: string
+    ): Buffer {
+        if (!/^[a-z0-9-]+$/.test(buildName)) {
+            throw new Error('Invalid debug player build name.');
+        }
+        const mode = Config.MULTIPLAYER_MODE ? 'multiplayer' : 'local';
+        const swfPath = path.join(
+            this.contentDir,
+            'p',
+            `debug-${buildName}`,
+            'DungeonBlitz.swf'
+        );
+        return buildDungeonBlitzSwfVariantBuffer(swfPath, mode, locale);
     }
 
     private getSelectedSwfUrl(): string {
@@ -429,6 +447,7 @@ try {
 
         this.app.use(express.json({ limit: '64kb' }));
         this.app.use(express.urlencoded({ extended: false, limit: '16kb' }));
+        registerWebAccessGate(this.app);
 
         this.app.use((req, res, next) => {
             const shouldLog =
@@ -493,6 +512,10 @@ try {
 
         this.app.get('/', (_req, res) => {
             res.sendFile(path.join(this.contentDir, 'index.html'));
+        });
+
+        this.app.get(['/play-test', '/play-test/'], (_req, res) => {
+            res.sendFile(path.join(this.contentDir, 'play-test', 'index.html'));
         });
 
         this.app.get('/lostpw', (req, res) => {
@@ -732,9 +755,14 @@ try {
             }
 
             const locale = this.resolveSwfLocale(req);
+            const debugPlayerBuild = String(req.query.debugPlayerBuild ?? '');
             res.type('application/x-shockwave-flash');
             res.setHeader('X-DungeonBlitz-Language', locale);
-            res.send(this.getSelectedSwfBuffer(locale));
+            res.send(
+                debugPlayerBuild
+                    ? this.getDebugPlayerSwfBuffer(locale, debugPlayerBuild)
+                    : this.getSelectedSwfBuffer(locale)
+            );
         });
 
         this.app.get('/p/cbq/Game.swz', (req, res) => {
@@ -972,10 +1000,6 @@ try {
             res.send('ok');
         });
         
-        // Debug route to check path
-        this.app.get('/debug-path', (req, res) => {
-            res.send(`Serving content from: ${this.contentDir}`);
-        });
     }
 
     public start(): void {

@@ -46,6 +46,7 @@
   "type": "commonjs",
   "devDependencies": {
     "@types/node": "^26.0.0",
+    "@types/ws": "^8.18.1",
     "cross-env": "^10.0.0",
     "nodemon": "^3.1.11",
     "ts-node": "^10.9.2",
@@ -53,9 +54,11 @@
   },
   "dependencies": {
     "@types/express": "^5.0.6",
+    "argon2": "^0.45.1",
     "discord-rpc": "^4.0.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.1",
-    "mongodb": "^7.4.0"
+    "mongodb": "^7.4.0",
+    "ws": "^8.18.3"
   }
 }
