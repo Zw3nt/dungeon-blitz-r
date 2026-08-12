@@ -1,12 +1,13 @@
 --- a/core/src/avm2/activation.rs
 +++ b/core/src/avm2/activation.rs
-@@ -29,11 +29,36 @@
+@@ -29,11 +29,39 @@
  use crate::tag_utils::SwfMovie;
  use gc_arena::Gc;
  use ruffle_macros::istr;
 -use std::cell::Cell;
 +use std::cell::{Cell, RefCell};
  use std::cmp::{Ordering, min};
++use std::collections::HashMap;
  use std::sync::Arc;
  use swf::avm2::types::MethodFlags as AbcMethodFlags;
  
@@ -15,13 +16,15 @@
 +// callpropvoid), which is how Game/Level/Entity/class_154's instance methods are called.
 +// Filters on the raw multiname's local name *before* it resolves to a class, so it can't
 +// miss a call just because the receiver turns out to be a subclass overriding the method
-+// (the earlier function.rs-only hook filtered by resolved bound_class, which could miss
-+// exactly that case). See function.rs for the companion hook covering event-dispatched
-+// calls (e.g. ENTER_FRAME), which never go through these opcodes.
++// (an earlier version filtered by resolved bound_class, which could miss exactly that
++// case). See function.rs for the companion hook covering event-dispatched calls (e.g.
++// ENTER_FRAME), which never go through these opcodes. Capped *per target method*, not
++// globally -- ENTER_FRAME firing every frame starved out every other target under a single
++// shared counter in an earlier version.
 +thread_local! {
-+    static DBR_SEQ_B_COUNT: RefCell<u32> = const { RefCell::new(0) };
++    static DBR_SEQ_B_COUNTS: RefCell<HashMap<&'static str, u32>> = RefCell::new(HashMap::new());
 +}
-+const DBR_SEQ_B_CAP: u32 = 300;
++const DBR_SEQ_B_PER_KEY_CAP: u32 = 15;
 +const DBR_SEQ_B_TARGETS: [&str; 10] = [
 +    "method_1284",
 +    "method_1636",
@@ -38,7 +41,7 @@
  /// Represents a single activation of a given AVM2 function or keyframe.
  pub struct Activation<'a, 'gc: 'a> {
      /// The number of locals this method uses.
-@@ -1105,6 +1130,50 @@
+@@ -1105,6 +1133,51 @@
          Ok(())
      }
  
@@ -50,16 +53,17 @@
 +            return;
 +        };
 +        let name = name.to_utf8_lossy();
-+        if !DBR_SEQ_B_TARGETS.contains(&name.as_ref()) {
++        let Some(&dbr_target) = DBR_SEQ_B_TARGETS.iter().find(|t| **t == name.as_ref()) else {
 +            return;
-+        }
++        };
 +
-+        let should_log = DBR_SEQ_B_COUNT.with(|c| {
-+            let mut c = c.borrow_mut();
-+            if *c >= DBR_SEQ_B_CAP {
++        let should_log = DBR_SEQ_B_COUNTS.with(|counts| {
++            let mut counts = counts.borrow_mut();
++            let count = counts.entry(dbr_target).or_insert(0);
++            if *count >= DBR_SEQ_B_PER_KEY_CAP {
 +                false
 +            } else {
-+                *c += 1;
++                *count += 1;
 +                true
 +            }
 +        });
@@ -89,7 +93,7 @@
      fn op_call_property(
          &mut self,
          multiname: Gc<'gc, Multiname<'gc>>,
-@@ -1113,6 +1182,7 @@
+@@ -1113,6 +1186,7 @@
          let args = self.get_args(arg_count);
          let multiname = multiname.fill_with_runtime_params(self)?;
          let receiver = self.pop_stack().null_check(self, Some(&multiname))?;
@@ -97,7 +101,15 @@
  
          let value = receiver.call_property(&multiname, args, self)?;
  
-@@ -1145,6 +1215,7 @@
+@@ -1129,6 +1203,7 @@
+         let args = self.get_args(arg_count);
+         let multiname = multiname.fill_with_runtime_params(self)?;
+         let receiver = self.pop_stack().null_check(self, Some(&multiname))?;
++        self.dbr_seq_probe(&multiname, receiver);
+         let function = receiver.get_property(&multiname, self)?;
+         let value = function.call(self, Value::Null, args)?;
+ 
+@@ -1145,6 +1220,7 @@
          let args = self.get_args(arg_count);
          let multiname = multiname.fill_with_runtime_params(self)?;
          let receiver = self.pop_stack().null_check(self, Some(&multiname))?;
@@ -107,12 +119,13 @@
  
 --- a/core/src/avm2/function.rs
 +++ b/core/src/avm2/function.rs
-@@ -9,9 +9,33 @@
+@@ -9,9 +9,36 @@
  use crate::string::WString;
  use gc_arena::{Collect, Gc};
  use std::borrow::Cow;
 -use std::cell::Cell;
 +use std::cell::{Cell, RefCell};
++use std::collections::HashMap;
  use std::fmt;
  
 +// Dungeon Blitz diagnostic-only lifecycle sequence probe (v6 isolated runtime). Covers
@@ -121,11 +134,13 @@
 +// `obj.method()` bytecode). See activation.rs for the companion hook that covers ordinary
 +// property calls. `.contains()` (not exact match) because Method::method_name() returns a
 +// namespace-qualified string for at least some private methods (e.g.
-+// "Main/private/method_1284"), not a bare identifier.
++// "Main/private/method_1284"). Capped *per target method*, not globally -- a first version
++// used one shared counter and a high-frequency target (the ENTER_FRAME handler itself,
++// firing every frame) starved out every other target before any of them got a single line.
 +thread_local! {
-+    static DBR_SEQ_A_COUNT: RefCell<u32> = const { RefCell::new(0) };
++    static DBR_SEQ_A_COUNTS: RefCell<HashMap<&'static str, u32>> = RefCell::new(HashMap::new());
 +}
-+const DBR_SEQ_A_CAP: u32 = 300;
++const DBR_SEQ_A_PER_KEY_CAP: u32 = 15;
 +const DBR_SEQ_A_TARGETS: [&str; 10] = [
 +    "method_1284",
 +    "method_1636",
@@ -142,7 +157,7 @@
  /// Represents a bound method.
  #[derive(Clone, Collect)]
  #[collect(no_drop)]
-@@ -198,6 +222,31 @@
+@@ -198,6 +225,32 @@
  ) -> Result<Value<'gc>, Error<'gc>> {
      let mc = activation.gc();
  
@@ -150,16 +165,17 @@
 +    // top of file). Cheap method-name precheck first; only formats/logs the rare matches.
 +    {
 +        let dbr_name = method.method_name();
-+        if DBR_SEQ_A_TARGETS
++        let dbr_matched_target = DBR_SEQ_A_TARGETS
 +            .iter()
-+            .any(|target| dbr_name.contains(target))
-+        {
-+            let should_log = DBR_SEQ_A_COUNT.with(|c| {
-+                let mut c = c.borrow_mut();
-+                if *c >= DBR_SEQ_A_CAP {
++            .find(|target| dbr_name.contains(*target));
++        if let Some(&dbr_target) = dbr_matched_target {
++            let should_log = DBR_SEQ_A_COUNTS.with(|counts| {
++                let mut counts = counts.borrow_mut();
++                let count = counts.entry(dbr_target).or_insert(0);
++                if *count >= DBR_SEQ_A_PER_KEY_CAP {
 +                    false
 +                } else {
-+                    *c += 1;
++                    *count += 1;
 +                    true
 +                }
 +            });
