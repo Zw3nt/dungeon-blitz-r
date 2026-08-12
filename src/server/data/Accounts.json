@@ -73,8 +73,34 @@
     "email": "test@theminesa.studio",
     "user_id": 14,
     "passwordKdf": "scrypt",
-    "passwordSalt": "Q79BwAHfEZZhlwfAYTNQbA==",
-    "passwordHash": "7uD3Gjwhz4bwG5tbOB7ivbGKqCHGTm4Ye/7ax2x//s9xby6JnBwD+L2UG5bKowi5FpSxetun1wowLMSorCO1mw==",
+    "passwordSalt": "aZGUERPHY2sjLCX/jgUZNg==",
+    "passwordHash": "G6UTq4dVn5kNw8efkKy5mne7B+QeehE/SmJNfFZ/Qv4O4LRp16iOud6rP0UNHCTk0erC9QCu4IYjOcND4gpFGA==",
+    "passwordParams": {
+      "N": 16384,
+      "r": 8,
+      "p": 1,
+      "keylen": 64
+    }
+  },
+  {
+    "email": "dbr-smoke-b@localhost.invalid",
+    "user_id": 15,
+    "passwordKdf": "scrypt",
+    "passwordSalt": "RE/llWlsNHTT8x6FLHLUVA==",
+    "passwordHash": "4BH/voFEW+PrD2EHNEIjjsit/7rd/DAXOS+VjalZagOyukz66obtRJx2Cl1j0RBswW5OwSxFsm2b5taWvoCD/Q==",
+    "passwordParams": {
+      "N": 16384,
+      "r": 8,
+      "p": 1,
+      "keylen": 64
+    }
+  },
+  {
+    "email": "deneme@hotmail.com",
+    "user_id": 16,
+    "passwordKdf": "scrypt",
+    "passwordSalt": "gfEo8dERBzqpHaYs4bZ9oQ==",
+    "passwordHash": "Y9z5FE694amT15UXzNifHJu7CNMi4shu0YhP60hlyec1QRHTZlwPiJSkcUwtfgdMUoTnhTuH5ydVxnqlpa394A==",
     "passwordParams": {
       "N": 16384,
       "r": 8,
