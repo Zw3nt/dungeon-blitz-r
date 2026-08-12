@@ -600,18 +600,90 @@ completely separate from the `v5` reference build:
 - `play-test/index.html` now recognizes `?v=6` the same way it already
   recognizes `?v=4`/`?v=5`.
 
-Test only at `https://dungenblitz.ecliptia.net/play-test/?v=6&renderer=wgpu-webgl`.
-Once a live run captures the `[DBR-CENSUS]` list, grep it for anything
-physics/gravity/collision-shaped, then (if needed) write a *third*,
-narrowly-targeted ordering patch against whatever the census reveals is
-actually called, record the actual call order here, confirm or refute the
-"physics ticks before this room's collision is registered" hypothesis, and
-only then patch the real fix -- either in the
-game SWF (most likely, since the fix belongs in `Main`/`Game`/`Entity`/
-`Level` client logic, not in Ruffle) or, if it turns out to be a Ruffle
-scheduling gap, in Ruffle itself. Whichever it is, revert/don't ship this
-trace patch as part of that fix -- it's a temporary instrument, not part of
-the product.
+### v6 census results (2026-08-12): real signal, but incomplete -- hook point needs rework
+
+Ran the census build live three times in the isolated harness (world entry
+only, world entry + WASD/jump, and an extended ~90s varied movement/attack
+session). Results were consistent and did **not** grow with more/longer
+gameplay -- 9 then 10 total unique entries, plateauing immediately:
+
+```text
+Main/Main/Main                    (constructor)
+Main/Main/Init
+Main/Main/method_1634
+Main/Main/method_561
+Main/Main/method_1761
+Main/Main/method_987              (only appeared in the extended run)
+Main/Main/private/method_1284     (confirms this *is* the ENTER_FRAME handler)
+Game/                             (constructor only -- iinit has no name index)
+Level/                            (constructor only)
+Entity/                           (constructor only)
+```
+
+This is a real, useful partial result:
+
+- **`Main.method_1284` firing is directly confirmed live** -- the static
+  ENTER_FRAME hypothesis from earlier in this doc is no longer just
+  inferred from decompiled source, it's observed.
+- `Game`, `Level`, and `Entity` objects are constructed as expected (their
+  `iinit` fires), and several *other* private `Main` methods do get caught
+  by the same hook (`method_987`, `method_1634`, `method_561`,
+  `method_1761`), which rules out "the hook doesn't work for private
+  methods" as a blanket explanation.
+- But **no instance method on `Game`, `Level`, or `Entity` was ever
+  caught** -- not `method_789`/`method_1636` (which `Main.method_1284`
+  calls every frame per the decompiled source), not `method_864`
+  (gravity), nothing -- despite real, confirmed gameplay (movement,
+  combat inputs) across all three runs.
+
+Also notable: `method.method_name()` returned a **namespace-qualified**
+string for at least one private method (`"Main/private/method_1284"`, seen
+concatenated into the logged key as `Main/Main/private/method_1284`), not
+a bare identifier. This is very likely why the *first* (method-name
+allowlist) patch version found nothing -- it compared against bare
+`"method_864"`, which would never match a qualified
+`"Entity/private/method_864"`-shaped string. The census version doesn't
+have this problem (it filters by resolved `bound_class()`, not by string
+prefix), so this alone doesn't explain the `Game`/`Level`/`Entity` gap.
+
+**Working theory for the gap:** `Main.method_1284` holds `Game` instances
+in `this.var_523` and calls `currGame.method_1636()`/`method_789()` on
+them -- ordinary `callproperty` bytecode, which by every code path read in
+`core/src/avm2/value.rs` (`call_property` -> `call_method_with_args`) does
+reach the same `exec()` this patch hooks. Since the constructor calls for
+these same three classes *were* caught by the identical mechanism, the
+hook itself isn't broken in general. Left unverified: whether the actual
+runtime instances in `var_523` are of a **subclass** of `Game` (not `Game`
+itself) whose *own* `method_1636`/`method_789` override the base ones --
+`bound_class()` would then resolve to that subclass's name, not `"Game"`,
+and this patch's exact class-name filter would silently miss it. The same
+could apply to `Entity`/`Level`. This wasn't checked before deploying
+because the census approach was believed to sidestep exactly this kind of
+naming assumption -- it doesn't, since the *class* name is still filtered,
+just not the *method* name.
+
+**Recommended next step, if this is picked up again:** either (a) widen
+the class filter from an exact-match allowlist to "class name is `Game`,
+`Level`, `Entity`, `Main`, `class_154`, **or that class's `superclass()`
+chain includes one of those**" (walks `Class::super_class()` -- needs
+checking whether that API exists and is cheap enough to call on every
+AVM2 call), or (b) hook a lower-level, name-based choke point instead:
+`core/src/avm2/activation.rs`'s `op_call_property`/`op_call_prop_void`
+opcode handlers receive the raw `Multiname` being called *before* it's
+resolved to a class -- logging its `local_name()` directly there would
+catch every call by name regardless of which (sub)class ends up owning
+the trait, at the cost of not knowing which class until a second lookup.
+(b) is probably the more robust fix given the subclassing gap found here.
+
+Whichever hook point is used, the actual investigation goal is unchanged:
+capture `class_154`'s collision-registration call and the player physics
+tick in the same live session and compare their order across a
+TutorialBoat -> Beach transition. Once that's confirmed, patch the real
+fix -- either in the game SWF (most likely, since the fix belongs in
+`Main`/`Game`/`Entity`/`Level` client logic, not in Ruffle) or, if it turns
+out to be a Ruffle scheduling gap, in Ruffle itself. Whichever it is,
+revert/don't ship this census patch as part of that fix -- it's a
+temporary instrument, not part of the product.
 
 ## Gender preview bug (2026-08-12, lead only, not traced)
 
