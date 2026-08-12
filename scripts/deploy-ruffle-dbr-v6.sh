@@ -55,7 +55,7 @@ grep -F 'Runtime: v6' "${staging}/DUNGEON_BLITZ_BUILD.txt" >/dev/null || {
   echo 'Artifact is not marked as the v6 runtime' >&2
   exit 65
 }
-grep -F 'DBR-TRACE' "${staging}/DUNGEON_BLITZ_BUILD.txt" >/dev/null || {
+grep -F 'DBR-CENSUS' "${staging}/DUNGEON_BLITZ_BUILD.txt" >/dev/null || {
   echo 'Artifact is not the diagnostic lifecycle-trace build' >&2
   exit 65
 }
@@ -71,4 +71,4 @@ trap - EXIT
 printf 'Installed Ruffle v6 diagnostic test runtime: %s\n' "${destination}"
 [[ -z "${backup}" ]] || printf 'Previous v6 runtime retained at: %s\n' "${backup}"
 printf 'Test only at: https://dungenblitz.ecliptia.net/play-test/?v=6&renderer=wgpu-webgl\n'
-printf 'This build logs [DBR-TRACE] console warnings on every lifecycle-relevant AVM2 call -- diagnostic only, never promote it.\n'
+printf 'This build logs [DBR-CENSUS] console warnings on every lifecycle-relevant AVM2 call -- diagnostic only, never promote it.\n'

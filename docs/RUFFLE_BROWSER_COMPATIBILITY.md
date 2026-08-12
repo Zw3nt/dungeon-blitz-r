@@ -552,15 +552,36 @@ Ruffle itself:
 `patches/ruffle-dungeon-blitz-lifecycle-trace.patch` hooks
 `core/src/avm2/function.rs`'s `pub fn exec<'gc>(...)` -- the single choke
 point every AVM2 method call (native and interpreted alike) passes
-through. It does a cheap `method.method_name()` precheck against a
-hardcoded list (`method_864`, `method_1195`, `method_444`, `method_232`,
-`method_1366`, `method_1770` -- the exact call chain traced above), and
-only for a match calls Ruffle's own existing `display_function()` helper
-(already used for its tracy-profiling span names and
-`BoundMethod::debug_full_name()`) to log
-`tracing::warn!("[DBR-TRACE] {ClassName}/{method_name}")`. `warn` level is
-guaranteed visible because `play-test`'s default `RufflePlayer.config`
-already sets `logLevel: "warn"`.
+through, confirmed by reading `Value::call_property`/`call_method_with_args`
+(both the vtable-slot fast path and the bound-method path converge on this
+same free `exec()` function).
+
+**First version (method-name allowlist) found nothing.** It prechecked
+`method.method_name()` against the exact call chain traced statically
+above (`method_864`, `method_1195`, `method_444`, `method_232`,
+`method_1366`, `method_1770`) and logged a match via Ruffle's own
+`display_function()` helper. A live run -- world entry, waiting, and actual
+WASD movement/jump input on an already-fresh-spawned TutorialBoat character
+-- produced **zero** hits despite confirmed real gameplay (character moved,
+camera followed). Ruled out: WARN-level filtering (other `%cWARN%c`
+messages from Ruffle itself appeared normally in the same run) and the
+call-path assumption (verified above). Most likely explanation: virtual
+dispatch resolves to a *subclass*'s override of `method_864` for the local
+player specifically (a different class, different obfuscated method index)
+rather than the base `Entity` method the static trace found, or the local
+player uses an entirely separate client-predicted movement path from the
+generic entity physics tick used for remote/NPC entities.
+
+**Second version (class census) is what's actually deployed now.** Rather
+than keep guessing method names, it logs every *distinct*
+`"ClassName/method_name"` pair seen for a broader set of classes (`Entity`,
+`Level`, `Game`, `Main`, `class_154`), once each (deduplicated via a
+`thread_local!` `HashSet`, capped at 4000 total lines), using
+`tracing::warn!("[DBR-CENSUS] {ClassName}/{method_name}")`. This discovers
+the real call graph empirically instead of relying on static analysis of
+control-flow-obfuscated decompiled output. `warn` level is guaranteed
+visible because `play-test`'s default `RufflePlayer.config` already sets
+`logLevel: "warn"`.
 
 This is **diagnostic-only**: it adds a string check to every single AVM2
 call in the game, everywhere, not just the traced ones. It must never be
@@ -580,10 +601,12 @@ completely separate from the `v5` reference build:
   recognizes `?v=4`/`?v=5`.
 
 Test only at `https://dungenblitz.ecliptia.net/play-test/?v=6&renderer=wgpu-webgl`.
-Once a live run captures `[DBR-TRACE]` ordering across TutorialBoat ->
-Beach (and ideally Beach -> first dungeon), record the actual call order
-here, confirm or refute the "physics ticks before this room's collision is
-registered" hypothesis, and only then patch the real fix -- either in the
+Once a live run captures the `[DBR-CENSUS]` list, grep it for anything
+physics/gravity/collision-shaped, then (if needed) write a *third*,
+narrowly-targeted ordering patch against whatever the census reveals is
+actually called, record the actual call order here, confirm or refute the
+"physics ticks before this room's collision is registered" hypothesis, and
+only then patch the real fix -- either in the
 game SWF (most likely, since the fix belongs in `Main`/`Game`/`Entity`/
 `Level` client logic, not in Ruffle) or, if it turns out to be a Ruffle
 scheduling gap, in Ruffle itself. Whichever it is, revert/don't ship this

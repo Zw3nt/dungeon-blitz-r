@@ -2,21 +2,55 @@ diff --git a/core/src/avm2/function.rs b/core/src/avm2/function.rs
 index 0000000..0000000 100644
 --- a/core/src/avm2/function.rs
 +++ b/core/src/avm2/function.rs
-@@ -198,6 +198,20 @@ pub fn exec<'gc>(
+@@ -9,9 +9,18 @@
+ use crate::string::WString;
+ use gc_arena::{Collect, Gc};
+ use std::borrow::Cow;
+-use std::cell::Cell;
++use std::cell::{Cell, RefCell};
++use std::collections::HashSet;
+ use std::fmt;
+
++// Dungeon Blitz diagnostic-only method census (v6 isolated runtime). Logs each distinct
++// "ClassName/method_name" combination exactly once, up to a hard cap, so a live run can
++// discover the real call graph instead of guessing method names from static analysis.
++thread_local! {
++    static DBR_CENSUS_SEEN: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
++}
++const DBR_CENSUS_CAP: usize = 4000;
++
+ /// Represents a bound method.
+ #[derive(Clone, Collect)]
+ #[collect(no_drop)]
+@@ -198,6 +207,34 @@ pub fn exec<'gc>(
  ) -> Result<Value<'gc>, Error<'gc>> {
      let mc = activation.gc();
 
-+    // Dungeon Blitz diagnostic-only lifecycle trace (v6 isolated runtime).
-+    // Cheap method-name precheck first; only formats/logs the rare matches.
++    // Dungeon Blitz diagnostic-only method census (v6 isolated runtime, see top of file).
++    if let Some(class) = method
++        .method_association()
++        .and_then(|assoc| assoc.bound_class())
 +    {
-+        let dbr_trace_name = method.method_name();
++        let class_name = class.name().local_name().to_utf8_lossy().into_owned();
 +        if matches!(
-+            dbr_trace_name.as_ref(),
-+            "method_864" | "method_1195" | "method_444" | "method_232" | "method_1366" | "method_1770"
++            class_name.as_str(),
++            "Entity" | "Level" | "Game" | "Main" | "class_154"
 +        ) {
-+            let mut dbr_trace_full = WString::new();
-+            display_function(&mut dbr_trace_full, method);
-+            tracing::warn!("[DBR-TRACE] {}", dbr_trace_full.to_utf8_lossy());
++            let key = format!("{}/{}", class_name, method.method_name());
++            let should_log = DBR_CENSUS_SEEN.with(|seen| {
++                let mut seen = seen.borrow_mut();
++                if seen.len() >= DBR_CENSUS_CAP {
++                    false
++                } else if seen.contains(&key) {
++                    false
++                } else {
++                    seen.insert(key.clone());
++                    true
++                }
++            });
++            if should_log {
++                tracing::warn!("[DBR-CENSUS] {}", key);
++            }
 +        }
 +    }
 +
