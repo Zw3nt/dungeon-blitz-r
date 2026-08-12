@@ -225,14 +225,50 @@ exactly (a light/white rectangle appearing where a bouncing arrow/pin
 should be) — this is not yet confirmed against an actual render. No SWF
 patch or Ruffle patch has been applied for this yet.
 
-Not yet done, in priority order for whoever continues this:
+### 2026-08-12 live-render attempt: not reproduced yet
 
-1. Get a live (headless Playwright is sufficient, no GPU/user session
-   required) screenshot of a quest NPC with `a_Notify_NewQuest` visible —
-   e.g. via TutorialBoat's first quest-giving NPC — with browser console
-   captured, to confirm the rectangle position/size matches character 597's
-   glow bounds and to check for any wgpu/WebGL validation errors in
-   console.
+Built a fully isolated local instance (separate ports 18080/18081/18090,
+separate copy of `src/server` with a fresh `Accounts.json`/`saves/`, real
+files rather than symlinks so `Config.DATA_DIR` resolution can't walk back
+to the real repo -- an earlier attempt that symlinked whole directories did
+exactly that and briefly rewrote the real local playtest account's password
+before being caught and reverted via `git checkout`; the lesson is to only
+symlink leaf files/directories that config resolution never treats as an
+anchor, never a parent of any server source file). A small
+`play-test-isolated/index.html` variant (not the shared `play-test/`) points
+Ruffle's `socketProxy` at the isolated `RuffleSocketProxy`. The client's
+`localhost:8000` master-file-list fetch is hardcoded independent of the
+static port, so a Playwright `page.route()` handler fetches it from the real
+isolated static port and fulfills the response directly (fulfilling instead
+of continuing avoids a same-origin/CORS mismatch).
+
+Through this harness: logged in, created a brand-new character (Mage,
+confirming the gender/appearance preview screen itself renders correctly),
+entered TutorialBoat, walked the full length of the boat, and clicked
+through the captain's dialogue repeatedly. Observed the "Ranged Attacks"
+tutorial hint box, a glowing blue target reticle over a flying enemy (a
+filter-adjacent effect that rendered correctly), the parrot, and the
+captain NPC -- across roughly 20 screenshots, **no white rectangle
+appeared anywhere**, including in UI that visually resembles filtered
+content. The `a_Notify_NewQuest` icon specifically was never confirmed
+on-screen: the captain (`ac_NPCCaptainSteering`, not a quest giver) never
+produced it, and repeated dialogue clicks didn't advance the tutorial past
+the ranged-attack hint.
+
+Net effect: this session did not reproduce the reported symptom, which
+somewhat weakens (but does not rule out) the GlowFilter hypothesis -- it
+does rule out a *blanket* wgpu-webgl filter rendering failure, since a
+similar glow-style effect (the target reticle) rendered fine. What's
+missing is specifically triggering `a_Notify_NewQuest`/`a_Notify_ActiveQuest`
+on screen. Not yet done, in priority order for whoever continues this:
+
+1. Find a game state that actually shows `a_Notify_ActiveQuest`/
+   `a_Notify_NewQuest` on-screen (a party member/alt account with a pending
+   but unaccepted quest may be more reliable than a freshly-created
+   character; the seeded local playtest account's "New*" characters already
+   have 1 mission in progress via `seedTestAccount.ts` and never showed the
+   marker either). Screenshot it and compare the rectangle bounds against
+   character 597's glow bounds.
 2. If confirmed, bisect whether the bug is `compositeSource=true` specific
    (Ruffle's shader comments call it "undocumented flash feature") by
    testing a filtered element that does not use `compositeSource` for
@@ -242,7 +278,7 @@ Not yet done, in priority order for whoever continues this:
    left/right/up/down tutorial arrows.
 4. Only if Ruffle's filter rendering is confirmed broken for this case,
    patch it upstream in the pinned fork (same GitHub Actions build/deploy
-   flow as the collision patches) — do not strip the filter from the SWF
+   flow as the collision patches) -- do not strip the filter from the SWF
    client-side as a workaround; that changes shipped visual design instead
    of fixing the renderer.
 
