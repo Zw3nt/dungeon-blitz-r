@@ -1,4 +1,6 @@
 node_modules
+.serena/
+backups/
 server_tapes
 src/server/dist
 src/server/Accounts.json
@@ -14,7 +16,17 @@ src/server/data/discord_account_links.json
 .discord-social-token.json
 .discord-social-channel-link.json
 src/server/.env
+deploy/Caddyfile.runtime
 src/server/.discord-social-token.json
 src/server/.discord-social-channel-link.json
 src/server/native_bridge/build/
 src/server/native_bridge/discord_social_sdk/
+
+# Ruffle runtime bundles are CI build/deploy artifacts (scripts/build-ruffle-dbr.sh,
+# scripts/deploy-ruffle-dbr-v*.sh); they are not source and are too large to track.
+src/client/content/localhost/ruffle-dbr-v*/
+src/client/content/localhost/ruffle/
+
+# Instrumented debug player SWFs are throwaway per-investigation builds served via
+# /p/cbp/DungeonBlitz.swf?debugPlayerBuild=<name>; regenerate them, do not commit them.
+src/client/content/localhost/p/debug-*/
