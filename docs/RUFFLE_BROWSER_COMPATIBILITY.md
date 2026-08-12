@@ -494,3 +494,46 @@ A v4 build is **not** considered successful until a normal browser test proves:
   still pass.
 
 No v4 artifact has been deployed or accepted yet.
+
+## Boss HP bar stuck full (2026-08-12, partial trace)
+
+Real testing: boss damage lands (combat works, boss can die) but the boss's
+own HUD health bar stays visually full. Server-side HP tracking looks
+mature and already well-covered by regression tests (`CombatHandler`'s
+`buildHpDeltaPayload`/`sendAuthoritativeServerAuthorityHpToViewer` --
+packet id `0x78` -- with dedicated server-authority reconciliation logic
+and passing tests like `dungeon_boss_hp_report_completion_regression.ts`,
+`boss_authority_regression.ts`), so this is most likely a client-side
+display bug, not a protocol/data bug. Started tracing the client boss-bar
+widget (same `ffdec-cli -export script -format script:as` technique used
+for the other two investigations above):
+
+- `class_61` is the boss-bar screen component. `class_61.Display(Room)`
+  constructs the bar containers via the same shared
+  `class_4.method_16("a_BossBar")` / `class_4.method_16("a_BossBar_Double")`
+  factory used everywhere else in the client (see the white-arrow section),
+  wrapping each in a `class_33` instance (`this.var_135` for the single-boss
+  bar, `this.var_132`/`this.var_682`/`this.var_636`/`this.var_662`/
+  `this.var_600` for the two-boss "Double" layout with catch-up bars).
+- `class_33`, despite being used here, turned out to be a **generic**
+  reusable UI/animated-icon wrapper (constructor `(Game, MovieClip)`,
+  methods like `Show`/`Hide`/`DestroyUIMovieClip`/`TickMovieClip` that just
+  manage timeline playback state, tooltips and parenting) -- not something
+  boss-bar-specific, and it does not touch `scaleX`/width anywhere. Ruled
+  out as the fill-percentage owner.
+- `class_61.method_1409(Room)` runs every frame per bar and does contain a
+  change-detection pattern (`if (param1.var_1358 != this.var_702) { ...
+  method_317() }`), but `method_317()` turned out to only refresh the boss
+  **name label** (`MathUtil.method_2(...am_BossName, this.var_702)`), not
+  the HP fill -- a second false lead, not the bug.
+
+**Not yet found:** the actual code that reads boss HP/maxHP and sets the
+bar's fill width or mask (most likely scaling `am_BossBar1`/`am_BossBar2`
+or a mask clip inside them, driven from an `Entity`'s hp field rather than
+from `class_61`/`class_33` directly). Next step: search `DungeonBlitz.swf`
+for `scaleX`/mask manipulation referencing `am_BossBar1`/`am_BossBar2`
+specifically (multiname/string scan the same way as the other
+investigations), or check `Entity.as` for a method that both `class_61`
+and the floating per-mob health bars share, since regular (non-boss) mob
+health bars are reported to work correctly and finding what they do
+differently from the boss bar is likely the fastest path to the bug.
