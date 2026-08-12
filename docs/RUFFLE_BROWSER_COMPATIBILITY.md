@@ -262,21 +262,43 @@ similar glow-style effect (the target reticle) rendered fine. What's
 missing is specifically triggering `a_Notify_NewQuest`/`a_Notify_ActiveQuest`
 on screen. Not yet done, in priority order for whoever continues this:
 
-1. Find a game state that actually shows `a_Notify_ActiveQuest`/
-   `a_Notify_NewQuest` on-screen (a party member/alt account with a pending
-   but unaccepted quest may be more reliable than a freshly-created
-   character; the seeded local playtest account's "New*" characters already
-   have 1 mission in progress via `seedTestAccount.ts` and never showed the
-   marker either). Screenshot it and compare the rectangle bounds against
-   character 597's glow bounds.
-2. If confirmed, bisect whether the bug is `compositeSource=true` specific
+1. **Real-user correction (2026-08-12, from direct testing, higher priority
+   than the leads below):** the rectangle is not near the captain and is
+   not TutorialBoat-boat-deck content at all. It appears **after leaving
+   the boat, at the moment the game drops the player onto the beach map**
+   -- i.e. at the same TutorialBoat -> Beach room transition already
+   tracked below under "Generic room-transition spawn/collision race".
+   This live session tried to reach that exact moment (fresh character,
+   full boat walk, ~26 combat-input attempts at the intro bat with mouse
+   clicks + ability hotkeys 1/2 aimed at its screen position) and could
+   not reliably land a hit -- mana moved from 0 to 5/80 once, meaning at
+   most one cast connected across the whole session, so the intro fight
+   was never cleared and the boat -> beach transition was never reached.
+   Blind coordinate-based clicking is not a reliable way to fight a moving
+   flying target headlessly. Whoever continues this should either drive
+   the fight with proper hit-testing (e.g. read the enemy's actual stage
+   coordinates from a debug trace instead of a fixed guess) or, more
+   simply, use `debugPlayerBuild=` with a small instrumented SWF that
+   force-completes the intro encounter/skips straight to the boat -> beach
+   door, then capture the arrival frame. This also means white-arrow and
+   the room-transition fall-through bug may share one root cause -- fix
+   room-transition lifecycle first and re-check whether the rectangle is
+   still there.
+2. Separately, find a game state that shows `a_Notify_ActiveQuest`/
+   `a_Notify_NewQuest` on-screen away from a room transition (a party
+   member/alt account with a pending but unaccepted quest may be more
+   reliable than a freshly-created character; the seeded local playtest
+   account's "New*" characters already have 1 mission in progress via
+   `seedTestAccount.ts` and never showed the marker either). Screenshot it
+   and compare the rectangle bounds against character 597's glow bounds.
+3. If confirmed, bisect whether the bug is `compositeSource=true` specific
    (Ruffle's shader comments call it "undocumented flash feature") by
    testing a filtered element that does not use `compositeSource` for
    comparison.
-3. Finish tracing `class_97.method_927`'s `method_187`/`method_290` targets
+4. Finish tracing `class_97.method_927`'s `method_187`/`method_290` targets
    to confirm or rule out the same glow-filter mechanism for the
    left/right/up/down tutorial arrows.
-4. Only if Ruffle's filter rendering is confirmed broken for this case,
+5. Only if Ruffle's filter rendering is confirmed broken for this case,
    patch it upstream in the pinned fork (same GitHub Actions build/deploy
    flow as the collision patches) -- do not strip the filter from the SWF
    client-side as a workaround; that changes shipped visual design instead
@@ -351,6 +373,34 @@ not been traced yet; do that next, the same way the TutorialBoat collision
 stroke bug was traced (grep for `Loader`/`addEventListener`/`Event.COMPLETE`
 around the spawn call to find whether spawn can run before an
 asynchronously-loaded room's collision finishes registering).
+
+**Update (2026-08-12):** direct testing reports the white-rectangle bug
+(see "White tutorial/quest-arrow rectangle investigation" above) also
+happens at this exact transition -- right after being dropped onto the
+beach map, not near the boat's captain. The two bugs may share one root
+cause in this transition's lifecycle (something briefly wrong right after
+a new room is instantiated, before it settles: collision registration
+racing spawn placement for one, and possibly the same window causing a
+freshly-constructed `class_4.method_16` object like the notify icon to
+render one bad frame before its texture/filter state is ready). Investigate
+the room-transition ordering first; it may fix both at once.
+
+`a_RoomDirector`/`a_LevelDirector` (dumped via the same `swfPatchUtils`
+tooling) turned out to be trivial data classes -- `a_RoomDirector` has only
+`thinkOnEnter: String`, `thinkOnCompletion: String`, `thinkOnHit: Array`
+instance fields and no methods; `a_LevelDirector` has only a `type: String`
+field. They are declarative cue definitions, not the logic that processes
+them. The multiname `thinkOnEnter` is referenced elsewhere in
+`DungeonBlitz.swf`'s ABC (confirmed via a multiname scan) but a first
+opcode-level reference scan for `getproperty`/`setproperty` against that
+multiname found no hits, meaning whatever reads `a_RoomDirector.thinkOnEnter`
+either accesses it through a different opcode pattern than scanned so far
+or resolves the property name dynamically (bracket notation from a string
+on the stack, not a compile-time-known multiname). Finding the actual
+consumer class is the next concrete step -- try scanning for `a_RoomDirector`
+itself (as a type/class reference, e.g. `istype`/`coerce`/`getDefinition`)
+rather than its field names, or search for `a_PlayerSpawn` the same way
+since that class is a much more direct anchor to the spawn call site.
 
 ### Required v4 acceptance test
 
