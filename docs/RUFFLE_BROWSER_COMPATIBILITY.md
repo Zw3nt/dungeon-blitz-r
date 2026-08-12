@@ -537,3 +537,55 @@ investigations), or check `Entity.as` for a method that both `class_61`
 and the floating per-mob health bars share, since regular (non-boss) mob
 health bars are reported to work correctly and finding what they do
 differently from the boss bar is likely the fastest path to the bug.
+
+## v6: diagnostic lifecycle-trace runtime
+
+Static/decompiled tracing of the room-transition race (above) reached its
+limit: the remaining question is strictly about *runtime call order*, which
+no amount of reading p-code or decompiled AS3 can answer. Rather than
+inject a `trace()` call into the game's own SWF (would need a brand-new
+ABC multiname; `swfPatchUtils`'s insertCode/BytePatch tooling only reuses
+multinames the surrounding code already references, so adding one is a
+much larger, riskier change than any existing patch), the trace lives in
+Ruffle itself:
+
+`patches/ruffle-dungeon-blitz-lifecycle-trace.patch` hooks
+`core/src/avm2/function.rs`'s `pub fn exec<'gc>(...)` -- the single choke
+point every AVM2 method call (native and interpreted alike) passes
+through. It does a cheap `method.method_name()` precheck against a
+hardcoded list (`method_864`, `method_1195`, `method_444`, `method_232`,
+`method_1366`, `method_1770` -- the exact call chain traced above), and
+only for a match calls Ruffle's own existing `display_function()` helper
+(already used for its tracy-profiling span names and
+`BoundMethod::debug_full_name()`) to log
+`tracing::warn!("[DBR-TRACE] {ClassName}/{method_name}")`. `warn` level is
+guaranteed visible because `play-test`'s default `RufflePlayer.config`
+already sets `logLevel: "warn"`.
+
+This is **diagnostic-only**: it adds a string check to every single AVM2
+call in the game, everywhere, not just the traced ones. It must never be
+served to real players. It is wired up as its own isolated runtime, `v6`,
+completely separate from the `v5` reference build:
+
+- `scripts/build-ruffle-dbr.sh` only applies it when
+  `DBR_ENABLE_LIFECYCLE_TRACE=1` is set (v4/v5 builds are unaffected).
+- `.github/workflows/build-ruffle-dbr-v6.yml` builds it with that flag and
+  `DBR_RUNTIME_LABEL=v6`, uploading a `ruffle-dbr-v6` artifact.
+- `scripts/deploy-ruffle-dbr-v6.sh` installs it to
+  `src/client/content/localhost/ruffle-dbr-v6/` only (mirrors the v4/v5
+  deploy scripts exactly: verifies the artifact, never touches `/`,
+  `ruffle-dbr-v3`, `v4`, or `v5`, keeps a timestamped previous-version
+  backup).
+- `play-test/index.html` now recognizes `?v=6` the same way it already
+  recognizes `?v=4`/`?v=5`.
+
+Test only at `https://dungenblitz.ecliptia.net/play-test/?v=6&renderer=wgpu-webgl`.
+Once a live run captures `[DBR-TRACE]` ordering across TutorialBoat ->
+Beach (and ideally Beach -> first dungeon), record the actual call order
+here, confirm or refute the "physics ticks before this room's collision is
+registered" hypothesis, and only then patch the real fix -- either in the
+game SWF (most likely, since the fix belongs in `Main`/`Game`/`Entity`/
+`Level` client logic, not in Ruffle) or, if it turns out to be a Ruffle
+scheduling gap, in Ruffle itself. Whichever it is, revert/don't ship this
+trace patch as part of that fix -- it's a temporary instrument, not part of
+the product.

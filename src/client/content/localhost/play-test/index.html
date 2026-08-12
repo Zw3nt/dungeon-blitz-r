@@ -78,16 +78,21 @@
       ? requestedQuality
       : "medium";
     const requestedRuffleVersion = hostParams.get("v");
-    const ruffleRuntimeVersion = ["4", "5"].includes(requestedRuffleVersion)
+    const ruffleRuntimeVersion = ["4", "5", "6"].includes(requestedRuffleVersion)
       ? requestedRuffleVersion
       : "3";
     // Each isolated runtime has its own immutable URL. This prevents a cached
     // failed bootstrap or WASM response from crossing test-runtime boundaries.
+    // v6 is diagnostic-only (patches/ruffle-dungeon-blitz-lifecycle-trace.patch): it logs
+    // a console warning on every call to a short list of client lifecycle methods. Never
+    // point normal testers at it; it's for capturing room-transition/physics timing only.
     const ruffleRuntimeBuild = ruffleRuntimeVersion === "4"
       ? "?build=dbr-v4-684cf827"
       : ruffleRuntimeVersion === "5"
         ? "?build=dbr-v5-static-readback-1"
-        : "";
+        : ruffleRuntimeVersion === "6"
+          ? "?build=dbr-v6-lifecycle-trace-1"
+          : "";
     const ruffleRuntimeUrl = `/ruffle-dbr-v${ruffleRuntimeVersion}/ruffle.js${ruffleRuntimeBuild}`;
 
     window.RufflePlayer = window.RufflePlayer || {};

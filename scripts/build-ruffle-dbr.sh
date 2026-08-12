@@ -7,7 +7,13 @@ output_dir="${1:-${project_dir}/src/client/content/localhost/ruffle-dbr-build}"
 ruffle_pr_head="684cf8270166b9230216002f4e617778468c84c3"
 compat_patch="${project_dir}/patches/ruffle-dungeon-blitz-read-graphics-data.patch"
 goto_placebyclass_patch="${project_dir}/patches/ruffle-dungeon-blitz-placebyclass-goto.patch"
+lifecycle_trace_patch="${project_dir}/patches/ruffle-dungeon-blitz-lifecycle-trace.patch"
 runtime_label="${DBR_RUNTIME_LABEL:-v4}"
+# Diagnostic-only: logs a console warning on every call to a short, hardcoded list of
+# obfuscated Dungeon Blitz client methods (see the patch file) so a live browser run can
+# capture the actual room-transition/physics lifecycle order. Never enable for a runtime
+# meant to be played normally -- it adds a per-AVM2-call string check everywhere.
+enable_lifecycle_trace="${DBR_ENABLE_LIFECYCLE_TRACE:-0}"
 
 for command in git npm cargo rustup wasm-bindgen; do
   command -v "${command}" >/dev/null || {
@@ -27,6 +33,11 @@ git -C "${source_dir}" apply --check "${compat_patch}"
 git -C "${source_dir}" apply --check "${goto_placebyclass_patch}"
 git -C "${source_dir}" apply "${compat_patch}"
 git -C "${source_dir}" apply "${goto_placebyclass_patch}"
+
+if [[ "${enable_lifecycle_trace}" == "1" ]]; then
+  git -C "${source_dir}" apply --check "${lifecycle_trace_patch}"
+  git -C "${source_dir}" apply "${lifecycle_trace_patch}"
+fi
 
 rustup toolchain install nightly \
   --profile minimal \
@@ -56,5 +67,12 @@ Graphics compatibility: fills plus colored SWF strokes for world collision
 Local patch: patches/ruffle-dungeon-blitz-placebyclass-goto.patch
 Build profile: web-wasm-extensions opt-level=2 codegen-units=256
 EOF
+
+if [[ "${enable_lifecycle_trace}" == "1" ]]; then
+  cat >>"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
+Local patch: patches/ruffle-dungeon-blitz-lifecycle-trace.patch
+Diagnostic-only: logs [DBR-TRACE] on room/collision/physics lifecycle calls
+EOF
+fi
 
 printf 'Ruffle Dungeon Blitz build written to %s\n' "${output_dir}"

@@ -1,0 +1,25 @@
+diff --git a/core/src/avm2/function.rs b/core/src/avm2/function.rs
+index 0000000..0000000 100644
+--- a/core/src/avm2/function.rs
++++ b/core/src/avm2/function.rs
+@@ -198,6 +198,20 @@ pub fn exec<'gc>(
+ ) -> Result<Value<'gc>, Error<'gc>> {
+     let mc = activation.gc();
+
++    // Dungeon Blitz diagnostic-only lifecycle trace (v6 isolated runtime).
++    // Cheap method-name precheck first; only formats/logs the rare matches.
++    {
++        let dbr_trace_name = method.method_name();
++        if matches!(
++            dbr_trace_name.as_ref(),
++            "method_864" | "method_1195" | "method_444" | "method_232" | "method_1366" | "method_1770"
++        ) {
++            let mut dbr_trace_full = WString::new();
++            display_function(&mut dbr_trace_full, method);
++            tracing::warn!("[DBR-TRACE] {}", dbr_trace_full.to_utf8_lossy());
++        }
++    }
++
+     let caller_dxns = activation.default_xml_namespace();
+
+     let ret = match method.method_kind() {
