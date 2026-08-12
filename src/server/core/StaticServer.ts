@@ -855,8 +855,11 @@ try {
 
         this.app.get('/api/presence/self', (req, res) => {
             const selection = PresenceService.selectRequesterSession(this.resolveRequesterAddress(req));
-            const statusCode =
-                selection.reason === 'ok' ? 200 : selection.reason === 'ambiguous' ? 409 : 404;
+            // 'no-sessions'/'not-found' are the normal response for any request made before the
+            // player has entered the world (or without the optional local Discord bridge running
+            // at all) -- not an error, so they shouldn't surface as a failed request in devtools.
+            // Only a genuine conflict (two matching sessions) is worth flagging as non-2xx.
+            const statusCode = selection.reason === 'ambiguous' ? 409 : 200;
 
             res.setHeader('Cache-Control', 'no-store');
             res.status(statusCode).json({

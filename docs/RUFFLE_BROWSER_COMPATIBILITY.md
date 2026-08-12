@@ -423,19 +423,64 @@ single already-loaded level, spawn position and collision registration
 both complete before the method returns, matching what was already known
 to work for TutorialBoat's *own* room.
 
-The remaining, still-unfound piece is what happens **across the SWF
-boundary** on a room transition: whatever per-frame ticker starts running
-gravity/physics for the just-spawned player (likely in `Game`'s or an
-`Entity`/`ClientEntity`'s update loop, not in `Level.as`) may not be gated
-on "this room's collision objects have finished `class_154.method_444`
-registration" specifically when that room's *level SWF itself* just
-finished an asynchronous `Loader` load -- as opposed to processing a child
-within an already-resident SWF, which is what `method_232` handles. Next
-step: find that per-frame physics ticker (search `DungeonBlitz.swf` for the
-class calling `class_154.method_444` and see what schedules calls to it
-relative to `ENTER_FRAME`/whatever drives player gravity) and check whether
-it can run for a frame or two against a room whose collision hasn't been
-registered yet right after a cross-SWF transition.
+**Update (2026-08-12), the per-frame physics ticker traced end to end:**
+followed the call graph forward from the actual `ENTER_FRAME` listener
+down to the gravity constant:
+
+```text
+Main.Init()                    -- addEventListener(Event.ENTER_FRAME, method_1284)
+  Main.method_1284(evt)         -- iterates every active Game in var_523, ticks each one unconditionally
+    Game.method_1636() / method_789()   -- MASTER_CLIENT dev flag picks one; both reachable
+      Game.method_1296()        -- per-entity update dispatch (gated on this.serverConn etc, not on level readiness)
+        Game.method_1970()
+          Entity.method_1366() / method_1770()
+            Entity.method_864() -- reads GRAVITY (multiname idx 2034), applies velocity/currSurface/entState
+```
+
+`Main.method_1284` ticks *every* `Game` instance in `var_523` every frame
+with no visible check for "is this Game's current level finished loading."
+`Game.method_1296`'s early checks are about server connection state and a
+tooltip/HUD refresh helper (`method_1337`, which turned out to be an
+unrelated cached-stat-diff check for HUD redraw, not a readiness gate --
+don't re-investigate it, it's a dead end already ruled out). No level- or
+collision-readiness guard was found anywhere in this chain by reading the
+decompiled source.
+
+Working theory, now fairly well supported: a room transition does not
+replace the `Game` object, so `Main.method_1284` never stops ticking the
+player's `Entity.method_864` physics across the transition. While the new
+level's SWF is asynchronously `Loader`-ing (network + parse time), the
+player entity keeps receiving gravity ticks against whatever
+`currSurface`/collision state is currently cached -- stale from the old
+room, or absent -- until the new level SWF's `Level.method_1195` finishes
+its synchronous `method_232` pass (collision registration + spawn point,
+proven above to be atomic together) and corrects both. That gap is the
+fall. This matches the reported symptom exactly: one brief, self-correcting
+fall right as the new room appears, not a persistent one.
+
+This has not been confirmed with an actual timestamp trace (no
+instrumentation added yet -- doing so needs an AS3 bytecode patch that
+calls `trace()`/`ExternalInterface.call` at `Entity.method_864` entry and
+at `class_154.method_444` entry/exit, in the same style as the existing
+`scripts/patch-dungeonblitz-*.ts` scripts, then a `debugPlayerBuild=`
+Playwright run with `?debug=1` to capture Ruffle's `traceObserver` output
+across TutorialBoat -> Beach). If confirmed, the generic fix is almost
+certainly one of:
+
+1. Suspend/skip `Entity.method_864` (or its callers) for the player entity
+   while the current level's `Level.method_1195` hasn't completed for the
+   *new* room -- needs a "level ready" flag Level can set and Game/Entity
+   can check.
+2. Don't let the old room's collision (`class_154`'s registered surfaces)
+   get cleared until the new room's is ready, so `currSurface` stays valid
+   across the gap instead of going stale/null.
+3. Keep the player's grounded flag/Y position frozen from the moment a
+   transition starts until the new room's spawn point + collision are both
+   set, rather than letting gravity free-run in between.
+
+Whichever is chosen, it should live in the shared tick/transition path
+(`Main`/`Game`/`Entity`/`Level`), not per-level, so it fixes every room
+transition at once rather than just TutorialBoat -> Beach.
 
 ### Required v4 acceptance test
 
