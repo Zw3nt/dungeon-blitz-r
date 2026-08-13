@@ -108,6 +108,152 @@
   </div>
 
   <script>
+    // Automatic performance telemetry (P0 investigation, 2026-08-13). Collects lifecycle
+    // timing, a frame-time histogram, and a resource-timing summary with zero manual F12
+    // work required from a tester -- it self-reports to /api/debug/performance-report on a
+    // timer and on page hide. No per-frame logging, only aggregated counters, so this is
+    // safe to leave on for every real session (not just diagnostic runtimes).
+    const DBR_PERF = (function setUpPerfTelemetry() {
+      const sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const marks = {};
+      const t0 = performance.now();
+      function mark(name) {
+        if (marks[name] !== undefined) return;
+        marks[name] = performance.now() - t0;
+      }
+      mark('PAGE_START');
+
+      // Frame-time histogram via rAF deltas. Bucketed counters only -- never one log line
+      // per frame. Percentiles computed client-side from a bounded reservoir before send.
+      const frame = {
+        count: 0,
+        totalMs: 0,
+        buckets: { gt33: 0, gt50: 0, gt100: 0, gt250: 0, gt500: 0 },
+        recent: [], // bounded ring buffer for percentile estimation
+        recentCap: 600,
+        lastT: null,
+        running: false
+      };
+      function frameTick(t) {
+        if (frame.lastT !== null) {
+          const dt = t - frame.lastT;
+          if (dt > 0 && dt < 5000) { // ignore tab-hidden/huge gaps as outliers, not stutter
+            frame.count += 1;
+            frame.totalMs += dt;
+            if (dt > 33) frame.buckets.gt33 += 1;
+            if (dt > 50) frame.buckets.gt50 += 1;
+            if (dt > 100) frame.buckets.gt100 += 1;
+            if (dt > 250) frame.buckets.gt250 += 1;
+            if (dt > 500) frame.buckets.gt500 += 1;
+            frame.recent.push(dt);
+            if (frame.recent.length > frame.recentCap) frame.recent.shift();
+          }
+        }
+        frame.lastT = t;
+        requestAnimationFrame(frameTick);
+      }
+      function startFrameTracking() {
+        if (frame.running) return;
+        frame.running = true;
+        requestAnimationFrame(frameTick);
+      }
+
+      function percentile(sorted, p) {
+        if (sorted.length === 0) return null;
+        const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+        return sorted[idx];
+      }
+
+      function resourceSummary() {
+        let entries = [];
+        try {
+          entries = performance.getEntriesByType('resource');
+        } catch (_error) {
+          return [];
+        }
+        return entries
+          .slice()
+          .sort((a, b) => b.duration - a.duration)
+          .slice(0, 20)
+          .map((e) => ({
+            name: e.name.length > 140 ? `${e.name.slice(0, 140)}...` : e.name,
+            durationMs: Math.round(e.duration),
+            transferSize: e.transferSize || 0,
+            decodedBodySize: e.decodedBodySize || 0,
+            initiatorType: e.initiatorType || ''
+          }));
+      }
+
+      function browserMetadata() {
+        return {
+          userAgent: navigator.userAgent,
+          hardwareConcurrency: navigator.hardwareConcurrency || null,
+          deviceMemory: navigator.deviceMemory || null,
+          screenWidth: screen.width,
+          screenHeight: screen.height,
+          devicePixelRatio: window.devicePixelRatio || 1,
+          visibilityState: document.visibilityState
+        };
+      }
+
+      function buildReport(extra) {
+        const sortedRecent = frame.recent.slice().sort((a, b) => a - b);
+        return {
+          perfSessionId: sessionId,
+          reportedAt: Date.now(),
+          marks: { ...marks },
+          frame: {
+            count: frame.count,
+            avgMs: frame.count > 0 ? Math.round((frame.totalMs / frame.count) * 10) / 10 : null,
+            p50Ms: percentile(sortedRecent, 0.5),
+            p95Ms: percentile(sortedRecent, 0.95),
+            p99Ms: percentile(sortedRecent, 0.99),
+            buckets: { ...frame.buckets }
+          },
+          slowestResources: resourceSummary(),
+          browser: browserMetadata(),
+          ...extra
+        };
+      }
+
+      let lastSentAt = 0;
+      function sendReport(extra) {
+        const now = Date.now();
+        if (now - lastSentAt < 5000) return; // guard against rapid duplicate sends
+        lastSentAt = now;
+        try {
+          const body = JSON.stringify(buildReport(extra || {}));
+          if (navigator.sendBeacon) {
+            const blob = new Blob([body], { type: 'application/json' });
+            navigator.sendBeacon('/api/debug/performance-report', blob);
+          } else {
+            fetch('/api/debug/performance-report', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body,
+              keepalive: true
+            }).catch(() => {});
+          }
+        } catch (_error) {
+          // Telemetry must never break the game.
+        }
+      }
+
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') {
+          sendReport({ reason: 'visibilitychange' });
+        }
+      });
+      window.addEventListener('pagehide', function () {
+        sendReport({ reason: 'pagehide' });
+      });
+      setInterval(function () {
+        sendReport({ reason: 'interval' });
+      }, 45000);
+
+      return { mark, startFrameTracking, sendReport, sessionId };
+    })();
+
     const hostParams = new URLSearchParams(window.location.search);
 
     // Detects whether the browser has real GPU-accelerated WebGL, or is stuck on a
@@ -176,6 +322,13 @@
     window.__dbrDebugEvents = [];
     const debugTraceEnabled = hostParams.get("debug") === "1" || hostParams.has("debugTrace");
     window.JSRecordStat = function (name, value) {
+      if (name === "Player" && value === true) {
+        DBR_PERF.mark("PLAYER_CONTROL_READY");
+        DBR_PERF.sendReport({ reason: "player_control_ready" });
+      }
+      if (name === "dblogin") {
+        DBR_PERF.mark("LOGIN_ACCEPTED");
+      }
       const isExistingStat = name === "frame" || name === "dblogin" || name === "Player";
       if (!isExistingStat && !debugTraceEnabled) {
         return;
@@ -484,7 +637,10 @@
         player.id = "DungeonBlitz";
         player.name = "DungeonBlitz";
         container.replaceChildren(player);
+        DBR_PERF.mark("SWF_LOAD_START");
         await player.ruffle().load(objectSwfUrl);
+        DBR_PERF.mark("SWF_LOAD_READY");
+        DBR_PERF.startFrameTracking();
         if (debugTraceEnabled) {
           player.ruffle().traceObserver = function (message) {
             window.JSRecordStat("trace", String(message));
@@ -500,6 +656,7 @@
     async function bootDungeonBlitzRuffle() {
       try {
         await window.__dbrLoadRuffleRuntime();
+        DBR_PERF.mark("RUFFLE_JS_READY");
         await embedDungeonBlitzSwf();
       } catch (error) {
         console.error("[DungeonBlitzHost] Ruffle runtime failed to load", error);

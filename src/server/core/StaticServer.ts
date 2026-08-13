@@ -455,6 +455,22 @@ try {
             res.status(200).json({});
         });
 
+        // P0 performance investigation (2026-08-13): automatic client telemetry (see
+        // play-test/index.html's DBR_PERF module) posts here on a timer, on visibility
+        // change, on page hide, and once PLAYER_CONTROL_READY fires. One structured log line
+        // per report -- no per-frame data reaches the server, only aggregated counters the
+        // client already computed. Never blocks or 500s on a malformed body; telemetry must
+        // not be able to affect gameplay.
+        this.app.post('/api/debug/performance-report', (req, res) => {
+            try {
+                const report = req.body;
+                console.log(`[PERF-REPORT] ${JSON.stringify(report)}`);
+            } catch (_error) {
+                // Swallow -- telemetry logging must never fail the request.
+            }
+            res.status(204).end();
+        });
+
         registerWebAccessGate(this.app);
 
         this.app.use((req, res, next) => {
