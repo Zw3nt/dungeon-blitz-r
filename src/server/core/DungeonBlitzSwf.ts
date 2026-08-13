@@ -52,6 +52,14 @@ const LOCAL_REFRESH_URL = 'http://localhost:8000/p/cbp/DungeonBlitz.swf?fv=cbz&g
 const LOCAL_REFRESH_URL_LEGACY = 'http://localhost/p/cbp/DungeonBlitz.swf?fv=cbz&gv=cbx';
 const REMOTE_REFRESH_URL = `http://${REMOTE_HOST}/p/cbp/DungeonBlitz.swf?fv=cbz&gv=cbx`;
 const REMOTE_REFRESH_URL_LEGACY = `http://${REMOTE_HOST}/p/cbp/DungeonBlitz.swf?fv=cbz&gv=cbx`;
+// The original game phoned GameAnalytics's real API on every session/level/design event.
+// On a private deployment that endpoint is just a dead network call the client waits on
+// (and retries) for no benefit -- redirect it to our own no-op route instead of leaving it
+// pointed at a third party. Same string length either way isn't required; the byte-patch
+// mechanism rewrites the length prefix.
+const GAME_ANALYTICS_ENDPOINT = 'http://api.gameanalytics.com';
+const GAME_ANALYTICS_LOCAL_NOOP = 'http://localhost:8000/ga-noop';
+const GAME_ANALYTICS_REMOTE_NOOP = `http://${REMOTE_HOST}/ga-noop`;
 const MOUNT_SPEED_PATCH_CLASS = 'CombatState';
 const MOUNT_SPEED_PATCH_METHOD = 'method_960';
 const MOUNT_SPEED_DUNGEON_FLAG = 'bInstanced';
@@ -181,6 +189,7 @@ function getReplacements(mode: DungeonBlitzSwfMode, locale: DungeonBlitzSwfLocal
             { oldValue: REMOTE_REFRESH_URL, newValue: LOCAL_REFRESH_URL },
             { oldValue: REMOTE_REFRESH_URL_LEGACY, newValue: LOCAL_REFRESH_URL },
             { oldValue: LOCAL_REFRESH_URL_LEGACY, newValue: LOCAL_REFRESH_URL },
+            { oldValue: GAME_ANALYTICS_ENDPOINT, newValue: GAME_ANALYTICS_LOCAL_NOOP },
             ...localeReplacements
         ];
     }
@@ -219,6 +228,7 @@ function getReplacements(mode: DungeonBlitzSwfMode, locale: DungeonBlitzSwfLocal
         { oldValue: LOCAL_REFRESH_URL, newValue: REMOTE_REFRESH_URL },
         { oldValue: REMOTE_REFRESH_URL_LEGACY, newValue: REMOTE_REFRESH_URL },
         { oldValue: LOCAL_REFRESH_URL_LEGACY, newValue: REMOTE_REFRESH_URL },
+        { oldValue: GAME_ANALYTICS_ENDPOINT, newValue: GAME_ANALYTICS_REMOTE_NOOP },
         ...localeReplacements
     ];
 }
