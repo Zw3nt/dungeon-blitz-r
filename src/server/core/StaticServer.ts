@@ -447,6 +447,14 @@ try {
 
         this.app.use(express.json({ limit: '64kb' }));
         this.app.use(express.urlencoded({ extended: false, limit: '16kb' }));
+
+        // Registered ahead of the access gate: the client's GameAnalytics endpoint is
+        // patched to point here (see DungeonBlitzSwf.ts), and it must answer regardless of
+        // browser session/cookie state to actually be a no-op.
+        this.app.use('/ga-noop', (_req, res) => {
+            res.status(200).json({});
+        });
+
         registerWebAccessGate(this.app);
 
         this.app.use((req, res, next) => {
@@ -1003,15 +1011,6 @@ try {
             res.send('ok');
         });
 
-        // The client's real GameAnalytics endpoint is patched to point here (see
-        // DungeonBlitzSwf.ts). A private deployment has no GameAnalytics account behind it,
-        // so every session/level/design event call was previously a dead network request the
-        // client waited on for nothing. Answer instantly with an empty success body instead
-        // of leaving it to time out against a third party.
-        this.app.use('/ga-noop', (_req, res) => {
-            res.status(200).json({});
-        });
-        
     }
 
     public start(): void {
