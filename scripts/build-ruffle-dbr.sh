@@ -20,6 +20,11 @@ enable_lifecycle_trace="${DBR_ENABLE_LIFECYCLE_TRACE:-0}"
 # suspected performance hot spot -- see docs/RUFFLE_BROWSER_COMPATIBILITY.md). No behavior
 # change, just a call counter.
 enable_readgraphics_trace="${DBR_ENABLE_READGRAPHICS_TRACE:-0}"
+placebyclass_trace_patch="${project_dir}/patches/ruffle-dungeon-blitz-placebyclass-trace.patch"
+# Diagnostic-only: logs a call-count + class-name marker every 100 calls to
+# MovieClip::place_by_class (the entity/NPC instantiation compatibility path). Measures
+# whether the P0 "stuck at 24% loading" report is spent inside repeated entity construction.
+enable_placebyclass_trace="${DBR_ENABLE_PLACEBYCLASS_TRACE:-0}"
 
 for command in git npm cargo rustup wasm-bindgen; do
   command -v "${command}" >/dev/null || {
@@ -48,6 +53,11 @@ fi
 if [[ "${enable_readgraphics_trace}" == "1" ]]; then
   git -C "${source_dir}" apply --check "${readgraphics_trace_patch}"
   git -C "${source_dir}" apply "${readgraphics_trace_patch}"
+fi
+
+if [[ "${enable_placebyclass_trace}" == "1" ]]; then
+  git -C "${source_dir}" apply --check "${placebyclass_trace_patch}"
+  git -C "${source_dir}" apply "${placebyclass_trace_patch}"
 fi
 
 rustup toolchain install nightly \
@@ -90,6 +100,13 @@ if [[ "${enable_readgraphics_trace}" == "1" ]]; then
   cat >>"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
 Local patch: patches/ruffle-dungeon-blitz-readgraphics-trace.patch
 Diagnostic-only: logs [DBR-RGD] call-count markers for Graphics.readGraphicsData
+EOF
+fi
+
+if [[ "${enable_placebyclass_trace}" == "1" ]]; then
+  cat >>"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
+Local patch: patches/ruffle-dungeon-blitz-placebyclass-trace.patch
+Diagnostic-only: logs [DBR-PBC] call-count + class-name markers for MovieClip::place_by_class
 EOF
 fi
 

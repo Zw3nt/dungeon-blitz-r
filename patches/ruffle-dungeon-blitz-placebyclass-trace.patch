@@ -1,0 +1,39 @@
+diff --git a/core/src/display_object/movie_clip.rs b/core/src/display_object/movie_clip.rs
+index 0dee714cd..8485c610b 100644
+--- a/core/src/display_object/movie_clip.rs
++++ b/core/src/display_object/movie_clip.rs
+@@ -4488,6 +4488,34 @@ impl<'gc, 'a> MovieClip<'gc> {
+         context: &mut UpdateContext<'gc>,
+         place_object: &swf::PlaceObject,
+     ) {
++        // Dungeon Blitz diagnostic-only call-rate probe (v8 isolated runtime). place_by_class
++        // is the compatibility path that resolves an AS3 class, constructs an instance, and
++        // adds it to the display list -- this is how the game's client-spawned entities
++        // (NPCs, monsters) get instantiated on level entry. P0 telemetry showed a real
++        // session stuck for 3+ minutes at ~70-80ms/frame (and climbing) with a "24%" in-game
++        // loading bar, never reaching PLAYER_CONTROL_READY, immediately after landing in
++        // NewbieRoad (which has ~95 client-spawned NPCs per NpcLoader). This logs a call
++        // count plus the class name being placed, so a live run during that exact stuck
++        // window shows whether it's spending that time inside repeated entity construction
++        // and which classes dominate. No wall-clock timer (Instant::now() isn't reliably
++        // available on wasm32-unknown-unknown); rate is derived from the JS host's console
++        // timestamps.
++        thread_local! {
++            static DBR_PBC_CALL_COUNT: std::cell::Cell<u64> = std::cell::Cell::new(0);
++        }
++        let dbr_call_number = DBR_PBC_CALL_COUNT.with(|c| {
++            let n = c.get() + 1;
++            c.set(n);
++            n
++        });
++        if dbr_call_number <= 50 || dbr_call_number % 100 == 0 {
++            let dbr_encoding = swf::SwfStr::encoding_for_version(self.swf_version());
++            let dbr_class_name = place_object.class_name
++                .map(|cn| cn.decode(dbr_encoding).to_utf8_lossy().into_owned())
++                .unwrap_or_else(|| "(none)".to_string());
++            tracing::warn!("[DBR-PBC] call={} class={}", dbr_call_number, dbr_class_name);
++        }
++
+         // LCE Phase 4 spike (Step 3b+3d): resolve the AS3 class via the
+         // movie's AVM2 domain, construct an instance, extract the backing
+         // DisplayObject, and add it to the display list at the requested
