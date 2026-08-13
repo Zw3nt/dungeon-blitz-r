@@ -123,6 +123,24 @@
       }
       mark('PAGE_START');
 
+      // Diagnostic Ruffle runtimes (v6+) log narrow [DBR-*] markers via Rust's tracing::warn!,
+      // which Ruffle forwards to console.warn. That only ever reached the browser console --
+      // wrap console.warn so those markers reach the server automatically too, no manual F12
+      // copy-paste needed. Never touches or delays the original console.warn call.
+      const dbrLogLines = [];
+      const originalConsoleWarn = console.warn.bind(console);
+      console.warn = function (...args) {
+        try {
+          const text = args.map((a) => (typeof a === 'string' ? a : String(a))).join(' ');
+          if (text.includes('[DBR-') && dbrLogLines.length < 500) {
+            dbrLogLines.push(text);
+          }
+        } catch (_error) {
+          // Never let capture break real logging.
+        }
+        return originalConsoleWarn(...args);
+      };
+
       // Frame-time histogram via rAF deltas. Bucketed counters only -- never one log line
       // per frame. Percentiles computed client-side from a bounded reservoir before send.
       const frame = {
@@ -212,6 +230,7 @@
           },
           slowestResources: resourceSummary(),
           browser: browserMetadata(),
+          dbrLogLines: dbrLogLines.slice(),
           ...extra
         };
       }
@@ -298,7 +317,7 @@
         ? "low"
         : "medium";
     const requestedRuffleVersion = hostParams.get("v");
-    const ruffleRuntimeVersion = ["4", "5", "6", "7", "8"].includes(requestedRuffleVersion)
+    const ruffleRuntimeVersion = ["4", "5", "6", "7", "8", "9"].includes(requestedRuffleVersion)
       ? requestedRuffleVersion
       : "3";
     // Each isolated runtime has its own immutable URL. This prevents a cached
@@ -316,7 +335,9 @@
             ? "?build=dbr-v7-readgraphics-trace-1"
             : ruffleRuntimeVersion === "8"
               ? "?build=dbr-v8-placebyclass-trace-1"
-              : "";
+              : ruffleRuntimeVersion === "9"
+                ? "?build=dbr-v9-audio-trace-1"
+                : "";
     const ruffleRuntimeUrl = `/ruffle-dbr-v${ruffleRuntimeVersion}/ruffle.js${ruffleRuntimeBuild}`;
 
     window.RufflePlayer = window.RufflePlayer || {};

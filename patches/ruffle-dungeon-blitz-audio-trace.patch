@@ -1,0 +1,78 @@
+diff --git a/core/src/backend/audio/mixer.rs b/core/src/backend/audio/mixer.rs
+index b98eb3f76..55a15f1d4 100644
+--- a/core/src/backend/audio/mixer.rs
++++ b/core/src/backend/audio/mixer.rs
+@@ -277,6 +277,36 @@ impl AudioMixer {
+             .sound_instances
+             .lock()
+             .expect("Cannot be called reentrant");
++
++        // Dungeon Blitz diagnostic-only audio-instance count probe (v9 isolated runtime).
++        // P0 investigation: a real session showed frame time climbing steadily for 6+
++        // minutes, never recovering, correlated with repeated one-shot ambient sound
++        // fetches. A Ruffle upstream issue (ruffle-rs/ruffle#19509) describes a similar
++        // pattern and a maintainer comment suspects it's *not* audio-internal (more likely
++        // orphaned MovieClips), but that wasn't confirmed for this specific mixer path.
++        // sound_instances.retain(|_, sound| sound.active) at the end of mix_audio looks
++        // correct by inspection -- this counter checks that empirically: log the live
++        // instance count so a real run during the stuck window shows whether it grows
++        // unbounded (confirms a mixer-level leak) or stays flat (clears the native audio
++        // mixer, redirects suspicion to MovieClip/display-object lifecycle instead). No
++        // wall-clock timer (Instant::now() isn't reliably available on
++        // wasm32-unknown-unknown); call-count-gated instead.
++        thread_local! {
++            static DBR_AUD_CALL_COUNT: std::cell::Cell<u64> = std::cell::Cell::new(0);
++        }
++        let dbr_call_number = DBR_AUD_CALL_COUNT.with(|c| {
++            let n = c.get() + 1;
++            c.set(n);
++            n
++        });
++        if dbr_call_number <= 10 || dbr_call_number % 500 == 0 {
++            tracing::warn!(
++                "[DBR-AUD] call={} active_sound_instances={}",
++                dbr_call_number,
++                sound_instances.len()
++            );
++        }
++
+         let volume = *self.volume.read().expect("Cannot be called reentrant");
+         let mut output_memory = self
+             .output_memory
+@@ -750,6 +780,36 @@ impl AudioMixerProxy {
+             .sound_instances
+             .lock()
+             .expect("Cannot be called reentrant");
++
++        // Dungeon Blitz diagnostic-only audio-instance count probe (v9 isolated runtime).
++        // P0 investigation: a real session showed frame time climbing steadily for 6+
++        // minutes, never recovering, correlated with repeated one-shot ambient sound
++        // fetches. A Ruffle upstream issue (ruffle-rs/ruffle#19509) describes a similar
++        // pattern and a maintainer comment suspects it's *not* audio-internal (more likely
++        // orphaned MovieClips), but that wasn't confirmed for this specific mixer path.
++        // sound_instances.retain(|_, sound| sound.active) at the end of mix_audio looks
++        // correct by inspection -- this counter checks that empirically: log the live
++        // instance count so a real run during the stuck window shows whether it grows
++        // unbounded (confirms a mixer-level leak) or stays flat (clears the native audio
++        // mixer, redirects suspicion to MovieClip/display-object lifecycle instead). No
++        // wall-clock timer (Instant::now() isn't reliably available on
++        // wasm32-unknown-unknown); call-count-gated instead.
++        thread_local! {
++            static DBR_AUD_CALL_COUNT: std::cell::Cell<u64> = std::cell::Cell::new(0);
++        }
++        let dbr_call_number = DBR_AUD_CALL_COUNT.with(|c| {
++            let n = c.get() + 1;
++            c.set(n);
++            n
++        });
++        if dbr_call_number <= 10 || dbr_call_number % 500 == 0 {
++            tracing::warn!(
++                "[DBR-AUD] call={} active_sound_instances={}",
++                dbr_call_number,
++                sound_instances.len()
++            );
++        }
++
+         let volume = *self.volume.read().expect("Cannot be called reentrant");
+         let mut output_memory = self
+             .output_memory

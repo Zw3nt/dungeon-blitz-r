@@ -25,6 +25,11 @@ placebyclass_trace_patch="${project_dir}/patches/ruffle-dungeon-blitz-placebycla
 # MovieClip::place_by_class (the entity/NPC instantiation compatibility path). Measures
 # whether the P0 "stuck at 24% loading" report is spent inside repeated entity construction.
 enable_placebyclass_trace="${DBR_ENABLE_PLACEBYCLASS_TRACE:-0}"
+audio_trace_patch="${project_dir}/patches/ruffle-dungeon-blitz-audio-trace.patch"
+# Diagnostic-only: logs a call-count + live active-sound-instance-count marker every 500
+# calls to AudioMixer::mix. Measures whether the P0 "frame time climbs for minutes, never
+# recovers" report is caused by a leak in the native audio mixer's sound_instances SlotMap.
+enable_audio_trace="${DBR_ENABLE_AUDIO_TRACE:-0}"
 
 for command in git npm cargo rustup wasm-bindgen; do
   command -v "${command}" >/dev/null || {
@@ -58,6 +63,11 @@ fi
 if [[ "${enable_placebyclass_trace}" == "1" ]]; then
   git -C "${source_dir}" apply --check "${placebyclass_trace_patch}"
   git -C "${source_dir}" apply "${placebyclass_trace_patch}"
+fi
+
+if [[ "${enable_audio_trace}" == "1" ]]; then
+  git -C "${source_dir}" apply --check "${audio_trace_patch}"
+  git -C "${source_dir}" apply "${audio_trace_patch}"
 fi
 
 rustup toolchain install nightly \
@@ -107,6 +117,13 @@ if [[ "${enable_placebyclass_trace}" == "1" ]]; then
   cat >>"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
 Local patch: patches/ruffle-dungeon-blitz-placebyclass-trace.patch
 Diagnostic-only: logs [DBR-PBC] call-count + class-name markers for MovieClip::place_by_class
+EOF
+fi
+
+if [[ "${enable_audio_trace}" == "1" ]]; then
+  cat >>"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
+Local patch: patches/ruffle-dungeon-blitz-audio-trace.patch
+Diagnostic-only: logs [DBR-AUD] active_sound_instances markers for AudioMixer::mix
 EOF
 fi
 
