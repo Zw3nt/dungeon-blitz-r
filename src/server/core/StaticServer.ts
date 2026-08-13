@@ -510,13 +510,28 @@ try {
                 req.path.endsWith('.swz') ||
                 req.path.endsWith('.xml')
             ) {
-                // Revalidate-always, but let the client keep the bytes. `no-store` used to be
-                // set here, which defeated the clientRevision cache-busting token above and
-                // forced Flash to re-download every level SWF (3-6 MB each) on every load and
-                // every region change. `no-cache` keeps content just as fresh -- the browser
-                // still asks on each request, and send()'s mtime/size ETag picks up a patched
-                // SWF immediately -- but an unchanged asset answers 304 instead of the body.
-                res.setHeader('Cache-Control', 'no-cache, must-revalidate, proxy-revalidate');
+                // `no-cache` (unconditional revalidate) used to apply to every .swf/.swz/.xml
+                // request alike. That's still correct for DungeonBlitz.swf/Game.swz -- they
+                // get actively patched (translations, compatibility fixes) during this
+                // project's development and must pick up a new patch on the very next load.
+                // But it also caught every OTHER static asset SWF (character graphics,
+                // animations, UI, per-level content) that this project never edits, forcing a
+                // full network round trip to just re-confirm "still valid" on every single
+                // one, every page load. P0 perf telemetry (2026-08-13) caught this directly:
+                // Gfx_Paladin_1.swf alone cost 2.6s with transferSize=300 bytes (i.e. purely
+                // a 304 round trip, no actual data) -- and it's one of dozens fetched in a
+                // burst on world entry, compounding under the browser's per-origin connection
+                // limit. A short max-age lets the browser skip the round trip entirely for
+                // repeat requests within the window, while still bounding staleness to a few
+                // minutes -- far tighter than this project's actual patch/deploy cadence.
+                const basename = req.path.split('/').pop() || '';
+                const isActivelyPatchedFile = basename === 'DungeonBlitz.swf' || basename === 'Game.swz';
+                res.setHeader(
+                    'Cache-Control',
+                    isActivelyPatchedFile
+                        ? 'no-cache, must-revalidate, proxy-revalidate'
+                        : 'public, max-age=300, must-revalidate'
+                );
                 res.setHeader('Surrogate-Control', 'no-store');
             }
             next();
