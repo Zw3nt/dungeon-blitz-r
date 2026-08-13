@@ -1,0 +1,68 @@
+name: Build Dungeon Blitz Ruffle v7
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'patches/ruffle-dungeon-blitz-*.patch'
+      - 'scripts/build-ruffle-dbr.sh'
+      - 'scripts/deploy-ruffle-dbr-v7.sh'
+      - '.github/workflows/build-ruffle-dbr-v7.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-selfhosted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: '1'
+      NODE_OPTIONS: --max-old-space-size=1536
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Set up Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Install matching wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.120 --locked
+
+      - name: Install wasm-opt
+        uses: sigoden/install-binary@v1
+        with:
+          repo: WebAssembly/binaryen
+          tag: version_129
+          name: wasm-opt
+
+      - name: Build patched self-hosted Ruffle bundle (with readGraphicsData call-rate trace)
+        run: |
+          DBR_RUNTIME_LABEL=v7 \
+          DBR_ENABLE_READGRAPHICS_TRACE=1 \
+          RUFFLE_SOURCE_DIR="${RUNNER_TEMP}/ruffle-dbr-source" \
+            ./scripts/build-ruffle-dbr.sh "${RUNNER_TEMP}/ruffle-dbr-v7"
+
+      - name: Verify bundle and readgraphics trace patch
+        run: |
+          test -f "${RUNNER_TEMP}/ruffle-dbr-v7/ruffle.js"
+          find "${RUNNER_TEMP}/ruffle-dbr-v7" -type f -name '*.wasm' -print -quit | grep -q .
+          grep -F 'Runtime: v7' "${RUNNER_TEMP}/ruffle-dbr-v7/DUNGEON_BLITZ_BUILD.txt"
+          grep -F 'DBR-RGD' "${RUNNER_TEMP}/ruffle-dbr-v7/DUNGEON_BLITZ_BUILD.txt"
+          grep -F 'DBR-RGD' patches/ruffle-dungeon-blitz-readgraphics-trace.patch
+
+      - name: Upload Ruffle v7 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruffle-dbr-v7
+          path: ${{ runner.temp }}/ruffle-dbr-v7
+          if-no-files-found: error
+          retention-days: 14

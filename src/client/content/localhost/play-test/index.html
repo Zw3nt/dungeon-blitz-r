@@ -152,7 +152,7 @@
         ? "low"
         : "medium";
     const requestedRuffleVersion = hostParams.get("v");
-    const ruffleRuntimeVersion = ["4", "5", "6"].includes(requestedRuffleVersion)
+    const ruffleRuntimeVersion = ["4", "5", "6", "7"].includes(requestedRuffleVersion)
       ? requestedRuffleVersion
       : "3";
     // Each isolated runtime has its own immutable URL. This prevents a cached
@@ -166,7 +166,9 @@
         ? "?build=dbr-v5-static-readback-1"
         : ruffleRuntimeVersion === "6"
           ? "?build=dbr-v6-lifecycle-trace-1"
-          : "";
+          : ruffleRuntimeVersion === "7"
+            ? "?build=dbr-v7-readgraphics-trace-1"
+            : "";
     const ruffleRuntimeUrl = `/ruffle-dbr-v${ruffleRuntimeVersion}/ruffle.js${ruffleRuntimeBuild}`;
 
     window.RufflePlayer = window.RufflePlayer || {};

@@ -1,0 +1,28 @@
+--- a/core/src/avm2/globals/flash/display/graphics.rs
++++ b/core/src/avm2/globals/flash/display/graphics.rs
+@@ -1349,6 +1349,26 @@ pub fn read_graphics_data<'gc>(
+     let mut result = Vec::new();
+     let recurse = args.get_bool(0);
+
++    // Dungeon Blitz diagnostic-only call-rate probe (v7 isolated runtime). readGraphicsData
++    // rebuilds a fresh AVM2 object graph (GraphicsSolidFill/GraphicsPath/GraphicsStroke, each
++    // with its own Vector<int>/Vector<Number>) from scratch on every call -- expensive if the
++    // caller invokes it every frame against geometry (room collision shapes) that never
++    // changes after load. No wall-clock timer here (Instant::now() isn't reliably available
++    // on wasm32-unknown-unknown); the JS host timestamps these via its own console listener
++    // instead, so this only needs to report a call number and the recurse flag. Uses a plain
++    // call-count threshold, not time, to decide when to log -- safe on every target.
++    thread_local! {
++        static DBR_RGD_CALL_COUNT: std::cell::Cell<u64> = std::cell::Cell::new(0);
++    }
++    let dbr_call_number = DBR_RGD_CALL_COUNT.with(|c| {
++        let n = c.get() + 1;
++        c.set(n);
++        n
++    });
++    if dbr_call_number <= 20 || dbr_call_number % 250 == 0 {
++        tracing::warn!("[DBR-RGD] call={} recurse={}", dbr_call_number, recurse);
++    }
++
+     if let Some(root) = this.as_object().and_then(|object| object.as_display_object()) {
+         let mut pending = vec![(root, Matrix::IDENTITY)];

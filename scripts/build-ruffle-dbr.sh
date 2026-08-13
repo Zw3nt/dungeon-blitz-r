@@ -8,12 +8,18 @@ ruffle_pr_head="684cf8270166b9230216002f4e617778468c84c3"
 compat_patch="${project_dir}/patches/ruffle-dungeon-blitz-read-graphics-data.patch"
 goto_placebyclass_patch="${project_dir}/patches/ruffle-dungeon-blitz-placebyclass-goto.patch"
 lifecycle_trace_patch="${project_dir}/patches/ruffle-dungeon-blitz-lifecycle-trace.patch"
+readgraphics_trace_patch="${project_dir}/patches/ruffle-dungeon-blitz-readgraphics-trace.patch"
 runtime_label="${DBR_RUNTIME_LABEL:-v4}"
 # Diagnostic-only: logs a console warning on every call to a short, hardcoded list of
 # obfuscated Dungeon Blitz client methods (see the patch file) so a live browser run can
 # capture the actual room-transition/physics lifecycle order. Never enable for a runtime
 # meant to be played normally -- it adds a per-AVM2-call string check everywhere.
 enable_lifecycle_trace="${DBR_ENABLE_LIFECYCLE_TRACE:-0}"
+# Diagnostic-only: logs a call-count marker every 250 calls to Graphics.readGraphicsData, to
+# measure whether the game calls it every frame against static collision geometry (a
+# suspected performance hot spot -- see docs/RUFFLE_BROWSER_COMPATIBILITY.md). No behavior
+# change, just a call counter.
+enable_readgraphics_trace="${DBR_ENABLE_READGRAPHICS_TRACE:-0}"
 
 for command in git npm cargo rustup wasm-bindgen; do
   command -v "${command}" >/dev/null || {
@@ -37,6 +43,11 @@ git -C "${source_dir}" apply "${goto_placebyclass_patch}"
 if [[ "${enable_lifecycle_trace}" == "1" ]]; then
   git -C "${source_dir}" apply --check "${lifecycle_trace_patch}"
   git -C "${source_dir}" apply "${lifecycle_trace_patch}"
+fi
+
+if [[ "${enable_readgraphics_trace}" == "1" ]]; then
+  git -C "${source_dir}" apply --check "${readgraphics_trace_patch}"
+  git -C "${source_dir}" apply "${readgraphics_trace_patch}"
 fi
 
 rustup toolchain install nightly \
@@ -72,6 +83,13 @@ if [[ "${enable_lifecycle_trace}" == "1" ]]; then
   cat >>"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
 Local patch: patches/ruffle-dungeon-blitz-lifecycle-trace.patch
 Diagnostic-only: logs [DBR-SEQ] on room/collision/physics lifecycle calls
+EOF
+fi
+
+if [[ "${enable_readgraphics_trace}" == "1" ]]; then
+  cat >>"${output_dir}/DUNGEON_BLITZ_BUILD.txt" <<EOF
+Local patch: patches/ruffle-dungeon-blitz-readgraphics-trace.patch
+Diagnostic-only: logs [DBR-RGD] call-count markers for Graphics.readGraphicsData
 EOF
 fi
 
