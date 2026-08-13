@@ -26,3 +26,4 @@
 +
      if let Some(root) = this.as_object().and_then(|object| object.as_display_object()) {
          let mut pending = vec![(root, Matrix::IDENTITY)];
+
