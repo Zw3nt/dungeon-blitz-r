@@ -194,6 +194,24 @@ export class GlobalState {
 
     // Level scope key -> Map<EntityId, EntityData>
     static levelEntities: Map<string, Map<number, any>> = new Map();
+    // Level scope key -> monotonic membership revision. Bumped on every join/leave so a
+    // client that missed a broadcast (deferred snapshot, packet loss, reconnect) can tell it
+    // is stale and ask for a full resync instead of silently staying out of sync forever.
+    static roomRevisionByScope: Map<string, number> = new Map();
+
+    static bumpRoomRevision(scopeKey: string | null | undefined): number {
+        const key = String(scopeKey ?? '');
+        if (!key) {
+            return 0;
+        }
+        const next = (GlobalState.roomRevisionByScope.get(key) ?? 0) + 1;
+        GlobalState.roomRevisionByScope.set(key, next);
+        return next;
+    }
+
+    static getRoomRevision(scopeKey: string | null | undefined): number {
+        return GlobalState.roomRevisionByScope.get(String(scopeKey ?? '')) ?? 0;
+    }
     static levelQuestProgress: Map<string, SharedDungeonProgressState> = new Map();
     // Level scope -> the single authoritative completion state for that dungeon run.
     static dungeonCompletions: Map<string, DungeonCompletionRunState> = new Map();

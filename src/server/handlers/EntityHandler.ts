@@ -4298,28 +4298,55 @@ export class EntityHandler {
     }
 
     private static sendExistingPlayersToJoiner(joiner: Client): void {
-        for (const other of GlobalState.getSessionsInLevelScope(getClientLevelScope(joiner))) {
+        const scopeKey = getClientLevelScope(joiner);
+        // Room membership registration: a stale client can compare this against the revision
+        // it last saw and know it missed something instead of silently drifting out of sync.
+        const roomRevision = GlobalState.bumpRoomRevision(scopeKey);
+        const sessionsInScope = GlobalState.getSessionsInLevelScope(scopeKey);
+        const diagSkipped: Array<{ other: string; reason: string }> = [];
+        let diagSent = 0;
+
+        for (const other of sessionsInScope) {
             if (other === joiner) {
                 continue;
             }
             if (!other.playerSpawned || !areClientsInSameLevelScope(joiner, other)) {
+                diagSkipped.push({
+                    other: String(other.character?.name ?? 'unknown'),
+                    reason: !other.playerSpawned ? 'not_spawned' : 'scope_mismatch'
+                });
                 continue;
             }
             if (other.userId && joiner.userId && other.userId === joiner.userId && other.character?.name === joiner.character?.name) {
                 continue;
             }
             if (!other.character || other.clientEntID <= 0) {
+                diagSkipped.push({ other: String(other.character?.name ?? 'unknown'), reason: 'no_character_or_entid' });
                 continue;
             }
 
             const otherProps = other.entities.get(other.clientEntID);
             if (!otherProps) {
+                diagSkipped.push({ other: String(other.character?.name ?? 'unknown'), reason: 'no_entity_props' });
                 continue;
             }
 
             EntityHandler.sendEntity(joiner, Entity.fromCharacter(other.clientEntID, other.character, otherProps));
             EntityHandler.sendOtherPlayerMountToJoiner(joiner, other);
+            diagSent += 1;
         }
+
+        // Temporary narrow diagnostic for the "friends standing next to each other don't see
+        // each other" report -- mirrors the existing [DUNGEON-DIAG] pattern used for boss
+        // tracking. Only fires once per player spawn/level-entry, not per-frame.
+        console.log(`[DUNGEON-DIAG] playerVisibility ${JSON.stringify({
+            joiner: String(joiner.character?.name ?? 'unknown'),
+            scope: scopeKey,
+            roomRevision,
+            sessionsInScope: sessionsInScope.size,
+            sent: diagSent,
+            skipped: diagSkipped
+        })}`);
 
         EntityHandler.replayStartedDungeonRoomEventsToJoiner(joiner);
         EntityHandler.scheduleExistingVisibleClientSpawnEntitiesToJoiner(joiner);
@@ -4365,18 +4392,77 @@ export class EntityHandler {
         EntityHandler.refreshPlayerSnapshot(client);
     }
 
-    static refreshPlayerSnapshot(client: Client, includeSelf: boolean = false): void {
+    private static readonly SNAPSHOT_RETRY_MAX_ATTEMPTS = 5;
+    private static readonly SNAPSHOT_RETRY_DELAY_MS = 150;
+
+    /**
+     * Notifies every other player already in the room that `client` is here (or that their
+     * state changed). This is also the only path that tells an *existing* player about a
+     * brand-new joiner, so dropping it silently -- which the old code did whenever the
+     * joiner's own entity snapshot wasn't materialized yet -- left that joiner permanently
+     * invisible to everyone else already in the room until some unrelated state change
+     * happened to call this again. A snapshot not being ready yet is a timing gap, not a
+     * reason to give up: retry a bounded number of times instead of dropping the broadcast.
+     */
+    static refreshPlayerSnapshot(client: Client, includeSelf: boolean = false, attempt: number = 0): void {
         const playerEntity = EntityHandler.buildPlayerSnapshot(client);
         if (!playerEntity) {
+            if (attempt >= EntityHandler.SNAPSHOT_RETRY_MAX_ATTEMPTS) {
+                console.log(`[DUNGEON-DIAG] playerSnapshotMissing ${JSON.stringify({
+                    client: String(client.character?.name ?? 'unknown'),
+                    scope: getClientLevelScope(client),
+                    gaveUpAfterAttempts: attempt
+                })}`);
+                return;
+            }
+            setTimeout(() => {
+                if (client.socket?.destroyed) {
+                    return;
+                }
+                EntityHandler.refreshPlayerSnapshot(client, includeSelf, attempt + 1);
+            }, EntityHandler.SNAPSHOT_RETRY_DELAY_MS);
             return;
         }
 
-        for (const other of GlobalState.getSessionsInLevelScope(getClientLevelScope(client))) {
-            if ((!includeSelf && other === client) || !other.playerSpawned || !areClientsInSameLevelScope(client, other)) {
+        const scopeKeyForSnapshot = getClientLevelScope(client);
+        const sessionsForSnapshot = GlobalState.getSessionsInLevelScope(scopeKeyForSnapshot);
+        let snapshotSentTo = 0;
+        const snapshotSkipped: Array<{ other: string; reason: string }> = [];
+        for (const other of sessionsForSnapshot) {
+            if (!includeSelf && other === client) {
+                continue;
+            }
+            if (!other.playerSpawned || !areClientsInSameLevelScope(client, other)) {
+                snapshotSkipped.push({
+                    other: String(other.character?.name ?? 'unknown'),
+                    reason: !other.playerSpawned ? 'not_spawned' : 'scope_mismatch'
+                });
                 continue;
             }
             EntityHandler.sendEntity(other, playerEntity);
+            snapshotSentTo += 1;
         }
+
+        console.log(`[DUNGEON-DIAG] playerVisibilityBroadcast ${JSON.stringify({
+            client: String(client.character?.name ?? 'unknown'),
+            scope: scopeKeyForSnapshot,
+            roomRevision: GlobalState.getRoomRevision(scopeKeyForSnapshot),
+            attempt,
+            sessionsInScope: sessionsForSnapshot.size,
+            sentTo: snapshotSentTo,
+            skipped: snapshotSkipped
+        })}`);
+    }
+
+    /**
+     * Full room resync: re-sends every existing player to `client` and re-broadcasts
+     * `client`'s own snapshot to everyone else in the room. Safe to call any number of
+     * times (both directions are idempotent full-state sends, not deltas) -- intended for
+     * reconnect and any future "I think I'm out of sync" client request.
+     */
+    static resyncRoomForClient(client: Client): void {
+        EntityHandler.sendExistingPlayersToJoiner(client);
+        EntityHandler.refreshPlayerSnapshot(client);
     }
 
     private static broadcastToLevel(sender: Client, data: Buffer, entity: EntityProps): void {
