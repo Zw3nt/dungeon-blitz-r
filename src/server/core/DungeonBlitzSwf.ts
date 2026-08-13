@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as zlib from 'zlib';
 import {
     applyPatchesToBody,
@@ -119,9 +121,30 @@ const DISCONNECT_SCREEN_RESTORE_ENGLISH: StringReplacement[] = [
     { oldValue: 'Istemci Hatasi', newValue: 'Client Error' },
 ];
 
+// Broader player-facing UI string coverage (gear/talent tooltips, character creation and
+// connection messages, social/guild menu labels) lives in an external JSON file rather than
+// growing this file, mirroring DialogueTranslationLoader's data/*.json pattern. Loaded once
+// and cached; a bad/missing file degrades to just the discipline replacements above instead
+// of failing SWF requests.
+let cachedUiTranslations: StringReplacement[] | null = null;
+
+function loadUiTranslations(): StringReplacement[] {
+    if (cachedUiTranslations) {
+        return cachedUiTranslations;
+    }
+    try {
+        const filePath = path.join(Config.DATA_DIR, 'data', 'SwfUiTranslations.tr.json');
+        const raw = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { replacements?: StringReplacement[] };
+        cachedUiTranslations = Array.isArray(raw.replacements) ? raw.replacements : [];
+    } catch (_error) {
+        cachedUiTranslations = [];
+    }
+    return cachedUiTranslations;
+}
+
 function getReplacements(mode: DungeonBlitzSwfMode, locale: DungeonBlitzSwfLocale): StringReplacement[] {
     const localeReplacements = locale === 'tr'
-        ? TURKISH_DISCIPLINE_REPLACEMENTS
+        ? [...TURKISH_DISCIPLINE_REPLACEMENTS, ...loadUiTranslations()]
         : DISCONNECT_SCREEN_RESTORE_ENGLISH;
     if (mode === 'local') {
         return [
