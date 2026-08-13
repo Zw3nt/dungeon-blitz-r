@@ -54,12 +54,52 @@
     }
 
     #ruffle-status[hidden] { display: none; }
+
+    #dbr-lang-switch {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 20;
+      display: flex;
+      gap: 2px;
+      padding: 3px;
+      border-radius: 8px;
+      background: rgba(20, 20, 26, 0.55);
+      backdrop-filter: blur(4px);
+      font-family: system-ui, sans-serif;
+    }
+
+    #dbr-lang-switch button {
+      appearance: none;
+      border: 0;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: #cfd0d6;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    #dbr-lang-switch button:hover { color: #f5f2e9; }
+    #dbr-lang-switch button:focus-visible { outline: 2px solid #f4cf83; outline-offset: 1px; }
+
+    #dbr-lang-switch button[aria-pressed="true"] {
+      color: #211a0d;
+      background: #d7ad58;
+    }
   </style>
 </head>
 
 <body>
 
   <div id="game-container"></div>
+
+  <div id="dbr-lang-switch" role="group" aria-label="Language">
+    <button type="button" id="dbr-lang-en" aria-pressed="false">EN</button>
+    <button type="button" id="dbr-lang-tr" aria-pressed="false">TR</button>
+  </div>
 
   <div id="ruffle-status" role="status" aria-live="polite">
     <div>
@@ -189,6 +229,26 @@
 
     const urlLanguage = normalizeGameLanguage(new URLSearchParams(window.location.search).get("lang"));
     document.cookie = "db_lang=; path=/; max-age=0; SameSite=Lax";
+
+    (function setUpLanguageSwitch() {
+      const activeLanguage = urlLanguage || "en";
+      const enButton = document.getElementById("dbr-lang-en");
+      const trButton = document.getElementById("dbr-lang-tr");
+      if (!enButton || !trButton) return;
+
+      enButton.setAttribute("aria-pressed", String(activeLanguage === "en"));
+      trButton.setAttribute("aria-pressed", String(activeLanguage === "tr"));
+
+      function switchLanguage(nextLanguage) {
+        if (nextLanguage === activeLanguage) return;
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set("lang", nextLanguage);
+        window.location.href = nextUrl.toString();
+      }
+
+      enButton.addEventListener("click", function () { switchLanguage("en"); });
+      trButton.addEventListener("click", function () { switchLanguage("tr"); });
+    })();
 
     const languageParam = urlLanguage ? `&lang=${urlLanguage}` : "";
     const requestedDebugPlayerBuild = new URLSearchParams(window.location.search).get("debugPlayerBuild") || "";
